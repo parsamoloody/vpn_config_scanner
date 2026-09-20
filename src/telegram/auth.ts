@@ -23,7 +23,7 @@ async function main() {
 
   let config: ReturnType<typeof getConfig> | null = null;
   try {
-    config = getConfig(true);
+    config = getConfig();
   } catch {
     console.log("Could not load full configuration from environment.");
   }

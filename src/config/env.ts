@@ -49,19 +49,13 @@ export type Config = z.infer<typeof envSchema>;
 
 let parsedConfig: Config | null = null;
 
-export function getConfig(allowEmptySession = false): Config {
+export function getConfig(): Config {
   if (parsedConfig) return parsedConfig;
 
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
     const errors = result.error.errors.map((e) => `[${e.path.join(".")}]: ${e.message}`).join("\n");
     throw new Error(`Configuration Validation Error:\n${errors}`);
-  }
-
-  if (!allowEmptySession && !result.data.TELEGRAM_SESSION) {
-    throw new Error(
-      "TELEGRAM_SESSION is missing. Please run 'npm run auth' to log in and generate your Telegram session string."
-    );
   }
 
   parsedConfig = result.data;
