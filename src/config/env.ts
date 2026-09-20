@@ -29,6 +29,11 @@ const envSchema = z.object({
     .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
   DATABASE_PATH: z.string().default(path.resolve(process.cwd(), "data/vpn_monitor.sqlite")),
   CUSTOM_CONFIG_REMARKS: z.string().default("@connexy_private"),
+  TELEGRAM_BOT_TOKEN: z.string().default(""),
+  ADMIN_USER_IDS: z
+    .string()
+    .default("")
+    .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 });
 

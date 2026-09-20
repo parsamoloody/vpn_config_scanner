@@ -4,6 +4,7 @@ import { ChannelRepository } from "./database/repositories/channel.repo.js";
 import { ConfigRepository } from "./database/repositories/config.repo.js";
 import { logger } from "./logger.js";
 import { ScanOrchestrator } from "./scheduler/orchestrator.js";
+import { TelegramBotService } from "./telegram/bot.js";
 import { initTelegramClient, disconnectTelegramClient } from "./telegram/client.js";
 import { TesterPool } from "./tester/pool.js";
 
@@ -34,9 +35,14 @@ async function main() {
   const orchestrator = new ScanOrchestrator(client, channelRepo, configRepo, testerPool, config);
   orchestrator.start();
 
+  // 5. Start Optional Bot Command Service
+  const botService = new TelegramBotService(config, channelRepo, configRepo, orchestrator);
+  await botService.start();
+
   // Handle graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Graceful shutdown initiated...");
+    botService.stop();
     orchestrator.stop();
     await disconnectTelegramClient();
     closeDatabase();
