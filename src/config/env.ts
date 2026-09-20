@@ -19,6 +19,7 @@ const envSchema = z.object({
   TESTER_MODE: z.enum(["xray", "tcp"]).default("xray"),
   TESTER_PING_URL: z.string().url().default("http://cp.cloudflare.com/generate_204"),
   MAX_HEALTHY_LATENCY_MS: z.coerce.number().default(3500),
+  MAX_POSTS_PER_CYCLE: z.coerce.number().default(5),
   ALLOWED_CHANNELS: z
     .string()
     .default("")

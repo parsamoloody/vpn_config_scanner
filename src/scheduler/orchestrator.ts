@@ -114,8 +114,8 @@ export class ScanOrchestrator {
       );
 
       // 4. Publish healthy configs
-      const unpostedHealthy = this.configRepo.getUnpostedHealthyConfigs(50);
-      logger.info({ unpostedCount: unpostedHealthy.length }, "Publishing unposted healthy configs...");
+      const unpostedHealthy = this.configRepo.getUnpostedHealthyConfigs(this.config.MAX_POSTS_PER_CYCLE);
+      logger.info({ unpostedCount: unpostedHealthy.length, maxLimit: this.config.MAX_POSTS_PER_CYCLE }, "Publishing unposted healthy configs...");
 
       const postedCount = await this.publisher.publishBatch(unpostedHealthy);
 

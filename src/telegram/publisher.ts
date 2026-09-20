@@ -65,10 +65,6 @@ export class TelegramPublisher {
 
   private formatConfigMessage(record: ConfigRecord): string {
     const latency = record.latency_ms ?? 0;
-    let speedBadge = "🟢 Fast";
-    if (latency > 500) speedBadge = "🔴 High Latency";
-    else if (latency > 250) speedBadge = "🟡 Normal";
-
     const protocolName = record.protocol.toUpperCase();
     let details: Record<string, unknown> = {};
     if (record.parsed_details) {
@@ -79,37 +75,22 @@ export class TelegramPublisher {
       }
     }
 
-    const security = details.security ? ` (${details.security})` : "";
-    const transport = details.transport ? ` • Transport: \`${details.transport}\`` : "";
+    const security = details.security && details.security !== "none" ? ` (${details.security})` : "";
+    const transport = details.transport && details.transport !== "tcp" ? ` (${details.transport})` : "";
+    const channelTag = this.config.CUSTOM_CONFIG_REMARKS.startsWith("@")
+      ? this.config.CUSTOM_CONFIG_REMARKS
+      : `@${this.config.CUSTOM_CONFIG_REMARKS}`;
 
     const lines = [
-      "🚀 **HEALTHY VPN CONFIG FOUND**",
+      "```",
+      record.raw_config,
+      "```",
+      `📡 Protocol: \`${protocolName}${security || transport}\``,
+      `⚡️ Ping Latency: \`${latency} ms\``,
       "",
-      `📡 **Protocol:** \`${protocolName}\`${security}${transport}`,
-      `🌐 **Server:** \`${record.server}:${record.port}\``,
-      `⚡ **Ping Latency:** \`${latency} ms\` (${speedBadge})`,
+      channelTag,
     ];
 
-    if (record.remarks) {
-      lines.push(`🏷️ **Remarks:** \`${this.escapeMarkdown(record.remarks)}\``);
-    }
-
-    if (record.source_channel_title) {
-      lines.push(`📢 **Source:** ${this.escapeMarkdown(record.source_channel_title)}`);
-    }
-
-    lines.push("");
-    lines.push("📋 **Configuration (Tap to copy):**");
-    lines.push("```");
-    lines.push(record.raw_config);
-    lines.push("```");
-    lines.push("");
-    lines.push("🛡️ _Verified & Monitored by VPN Health Bot_");
-
     return lines.join("\n");
-  }
-
-  private escapeMarkdown(text: string): string {
-    return text.replace(/([_*\[\]()~`>#+=|{}.!-])/g, "\\$1");
   }
 }
