@@ -65,6 +65,13 @@ export class TelegramPublisher {
 
   private formatConfigMessage(record: ConfigRecord): string {
     const latency = record.latency_ms ?? 0;
+    let speedBadge = "🟢 Fast";
+    if (latency > 600) {
+      speedBadge = "🔴 Slow";
+    } else if (latency > 300) {
+      speedBadge = "🟡 Normal";
+    }
+
     const protocolName = record.protocol.toUpperCase();
     let details: Record<string, unknown> = {};
     if (record.parsed_details) {
@@ -86,7 +93,7 @@ export class TelegramPublisher {
       record.raw_config,
       "```",
       `📡 Protocol: \`${protocolName}${security || transport}\``,
-      `⚡️ Ping Latency: \`${latency} ms\``,
+      `⚡️ Ping Latency: \`${latency} ms\` (${speedBadge})`,
       "",
       channelTag,
     ];
