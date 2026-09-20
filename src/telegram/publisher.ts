@@ -93,10 +93,14 @@ export class TelegramPublisher {
       record.raw_config,
       "```",
       `📡 Protocol: \`${protocolName}${security || transport}\``,
-      `⚡️ Ping Latency: \`${latency} ms\` (${speedBadge})`,
-      "",
-      channelTag,
     ];
+
+    if (this.config.INCLUDE_PING_IN_POST) {
+      lines.push(`⚡️ Ping Latency: \`${latency} ms\` (${speedBadge})`);
+    }
+
+    lines.push("");
+    lines.push(channelTag);
 
     return lines.join("\n");
   }

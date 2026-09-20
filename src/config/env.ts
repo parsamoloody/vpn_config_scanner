@@ -30,6 +30,13 @@ const envSchema = z.object({
     .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
   DATABASE_PATH: z.string().default(path.resolve(process.cwd(), "data/vpn_monitor.sqlite")),
   CUSTOM_CONFIG_REMARKS: z.string().default("@connexy_private"),
+  INCLUDE_PING_IN_POST: z
+    .union([z.boolean(), z.string()])
+    .default(false)
+    .transform((val) => {
+      if (typeof val === "boolean") return val;
+      return val.toLowerCase() === "true" || val === "1";
+    }),
   TELEGRAM_BOT_TOKEN: z.string().default(""),
   ADMIN_USER_IDS: z
     .string()
