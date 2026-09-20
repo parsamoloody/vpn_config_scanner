@@ -1,10 +1,10 @@
-# Telegram VPN Config Monitoring Bot 🚀
+# Telegram VPN Config Monitoring Bot
 
 A production-ready Node.js bot that scans all Telegram channels you have joined using your personal Telegram account session (via MTProto / GramJS), extracts VPN configurations (`vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `tuic://`), tests their connectivity and ping latency, filters out dead or unreachable servers, prevents duplicate posts, stores results in SQLite, and publishes healthy configs to your own Telegram channel every 10 minutes.
 
 ---
 
-## 🌟 Key Features
+## Features
 
 - **Telegram User Client (MTProto)**: Uses GramJS with your account session to access all joined public and private broadcast channels.
 - **Multi-Protocol Support**:
@@ -30,7 +30,7 @@ A production-ready Node.js bot that scans all Telegram channels you have joined 
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
                                ┌─────────────────────────────┐
@@ -70,7 +70,7 @@ A production-ready Node.js bot that scans all Telegram channels you have joined 
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 1. **Node.js**: v18+ (tested on Node v20, v22, and v24).
 2. **Telegram MTProto Credentials**:
@@ -81,7 +81,7 @@ A production-ready Node.js bot that scans all Telegram channels you have joined 
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install Dependencies
 
@@ -146,7 +146,7 @@ docker compose logs -f
 
 ---
 
-## ⚙️ Configuration Reference
+## Configuration Reference
 
 All settings can be configured in `.env`:
 
@@ -176,7 +176,7 @@ All settings can be configured in `.env`:
 
 ---
 
-## 🧪 Testing
+## Testing
 
 Run automated tests:
 
@@ -189,9 +189,3 @@ Run TypeScript verification:
 ```bash
 npm run lint
 ```
-
----
-
-## 🛡️ License
-
-MIT
