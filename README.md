@@ -164,9 +164,13 @@ All settings can be configured in `.env`:
 | `TESTER_MODE` | `xray` | Testing engine: `xray` (full proxy test) or `tcp` (TCP ping) |
 | `TESTER_PING_URL` | `http://cp.cloudflare.com/generate_204` | Endpoint to verify internet connectivity |
 | `MAX_HEALTHY_LATENCY_MS` | `3500` | Maximum latency threshold; slower configs are rejected |
+| `MAX_POSTS_PER_CYCLE` | `5` | Maximum number of healthy configs to publish per scan cycle |
 | `ALLOWED_CHANNELS` | `""` (all) | Comma-separated channel usernames/IDs to exclusively scan (e.g. `proxy_changgel,vpn_ir_f,xxx`). If set, the bot only scans these channels. |
 | `EXCLUDED_CHANNELS` | `""` | Comma-separated channel IDs/usernames to ignore |
 | `CUSTOM_CONFIG_REMARKS` | `@connexy_private` | Remarks name to replace after `#` (and inside VMess JSON `ps`) for all published configs |
+| `INCLUDE_PING_IN_POST` | `false` | Whether to include ping latency in published channel posts (`true`/`false`) |
+| `TELEGRAM_BOT_TOKEN` | `""` (optional) | Telegram Bot API token from @BotFather for chat commands (`/scan`, `/status`, `/channels`) |
+| `ADMIN_USER_IDS` | `""` (optional) | Comma-separated Telegram User IDs authorized to send bot commands |
 | `DATABASE_PATH` | `./data/vpn_monitor.sqlite` | Path to SQLite database file |
 | `LOG_LEVEL` | `info` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
 
