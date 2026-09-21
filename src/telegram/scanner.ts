@@ -1,6 +1,7 @@
 import { TelegramClient } from "telegram";
 import { Config } from "../config/env.js";
 import { ChannelRepository } from "../database/repositories/channel.repo.js";
+import { SettingsRepository } from "../database/repositories/settings.repo.js";
 import { extractRawConfigsFromText } from "../extractor/regex.js";
 import { parseVpnConfig } from "../extractor/parser.js";
 import { ParsedVpnConfig } from "../extractor/types.js";
@@ -16,12 +17,19 @@ export interface ScannedConfigItem {
 export class TelegramScanner {
   private client: TelegramClient;
   private channelRepo: ChannelRepository;
+  private settingsRepo?: SettingsRepository;
   private config: Config;
 
-  constructor(client: TelegramClient, channelRepo: ChannelRepository, config: Config) {
+  constructor(
+    client: TelegramClient,
+    channelRepo: ChannelRepository,
+    config: Config,
+    settingsRepo?: SettingsRepository
+  ) {
     this.client = client;
     this.channelRepo = channelRepo;
     this.config = config;
+    this.settingsRepo = settingsRepo;
   }
 
   async scanAllChannels(): Promise<{
@@ -34,7 +42,10 @@ export class TelegramScanner {
     const configsFound: ScannedConfigItem[] = [];
 
     const targetChannel = this.cleanIdentifier(this.config.TARGET_CHANNEL_ID).toLowerCase();
-    const allowed = this.config.ALLOWED_CHANNELS.map((c) => this.cleanIdentifier(c));
+    const rawAllowed = this.settingsRepo
+      ? this.settingsRepo.getAllowedChannels()
+      : this.config.ALLOWED_CHANNELS;
+    const allowed = rawAllowed.map((c) => this.cleanIdentifier(c));
     const excluded = this.config.EXCLUDED_CHANNELS.map((c) => this.cleanIdentifier(c).toLowerCase());
 
     // If specific channels are provided in ALLOWED_CHANNELS, scan only those directly
@@ -146,9 +157,13 @@ export class TelegramScanner {
       const text = msg.message || (msg as any).text || "";
       if (!text) continue;
 
+      const customRemarks = this.settingsRepo
+        ? this.settingsRepo.getCustomRemarks()
+        : this.config.CUSTOM_CONFIG_REMARKS;
+
       const rawConfigs = extractRawConfigsFromText(text);
       for (const raw of rawConfigs) {
-        const parsed = parseVpnConfig(raw, this.config.CUSTOM_CONFIG_REMARKS);
+        const parsed = parseVpnConfig(raw, customRemarks);
         if (parsed) {
           configs.push({
             parsed,

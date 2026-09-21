@@ -2,6 +2,7 @@ import { getConfig } from "./config/env.js";
 import { initDatabase, closeDatabase } from "./database/db.js";
 import { ChannelRepository } from "./database/repositories/channel.repo.js";
 import { ConfigRepository } from "./database/repositories/config.repo.js";
+import { SettingsRepository } from "./database/repositories/settings.repo.js";
 import { logger } from "./logger.js";
 import { ScanOrchestrator } from "./scheduler/orchestrator.js";
 import { TelegramBotService } from "./telegram/bot.js";
@@ -23,6 +24,7 @@ async function main() {
   initDatabase(config.DATABASE_PATH);
   const channelRepo = new ChannelRepository();
   const configRepo = new ConfigRepository();
+  const settingsRepo = new SettingsRepository(config);
 
   // 2. Initialize Telegram MTProto Client
   const client = await initTelegramClient(config);
@@ -32,11 +34,24 @@ async function main() {
   await testerPool.init();
 
   // 4. Start Scan Orchestrator
-  const orchestrator = new ScanOrchestrator(client, channelRepo, configRepo, testerPool, config);
+  const orchestrator = new ScanOrchestrator(
+    client,
+    channelRepo,
+    configRepo,
+    testerPool,
+    config,
+    settingsRepo
+  );
   orchestrator.start();
 
   // 5. Start Optional Bot Command Service
-  const botService = new TelegramBotService(config, channelRepo, configRepo, orchestrator);
+  const botService = new TelegramBotService(
+    config,
+    channelRepo,
+    configRepo,
+    orchestrator,
+    settingsRepo
+  );
   await botService.start();
 
   // Handle graceful shutdown

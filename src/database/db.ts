@@ -68,6 +68,11 @@ export function initDatabase(dbPath: string): Database.Database {
       configs_healthy INTEGER DEFAULT 0,
       configs_posted INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   dbInstance = db;

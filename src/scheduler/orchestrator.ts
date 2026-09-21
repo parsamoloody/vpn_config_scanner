@@ -2,6 +2,7 @@ import { TelegramClient } from "telegram";
 import { Config } from "../config/env.js";
 import { ChannelRepository } from "../database/repositories/channel.repo.js";
 import { ConfigRepository } from "../database/repositories/config.repo.js";
+import { SettingsRepository } from "../database/repositories/settings.repo.js";
 import { ParsedVpnConfig } from "../extractor/types.js";
 import { logger } from "../logger.js";
 import { TelegramPublisher } from "../telegram/publisher.js";
@@ -12,6 +13,7 @@ export class ScanOrchestrator {
   private client: TelegramClient;
   private channelRepo: ChannelRepository;
   private configRepo: ConfigRepository;
+  private settingsRepo?: SettingsRepository;
   private testerPool: TesterPool;
   private scanner: TelegramScanner;
   private publisher: TelegramPublisher;
@@ -25,19 +27,26 @@ export class ScanOrchestrator {
     channelRepo: ChannelRepository,
     configRepo: ConfigRepository,
     testerPool: TesterPool,
-    config: Config
+    config: Config,
+    settingsRepo?: SettingsRepository
   ) {
     this.client = client;
     this.channelRepo = channelRepo;
     this.configRepo = configRepo;
     this.testerPool = testerPool;
     this.config = config;
+    this.settingsRepo = settingsRepo;
 
-    this.scanner = new TelegramScanner(client, channelRepo, config);
-    this.publisher = new TelegramPublisher(client, configRepo, config);
+    this.scanner = new TelegramScanner(client, channelRepo, config, settingsRepo);
+    this.publisher = new TelegramPublisher(client, configRepo, config, settingsRepo);
   }
 
-  async runCycle(): Promise<void> {
+  async runCycle(isManualTrigger = false): Promise<void> {
+    if (!isManualTrigger && this.settingsRepo && !this.settingsRepo.isMonitoringActive()) {
+      logger.debug("Automated monitoring is currently paused. Skipping scheduled cycle.");
+      return;
+    }
+
     if (this.isRunning) {
       logger.warn("Previous scan cycle is still running. Skipping this trigger.");
       return;
@@ -48,7 +57,7 @@ export class ScanOrchestrator {
     const runId = this.configRepo.startScanRun();
 
     logger.info("==================================================");
-    logger.info("Starting VPN scan & health check cycle...");
+    logger.info(`Starting VPN scan & health check cycle (${isManualTrigger ? "Manual" : "Scheduled"})...`);
     logger.info("==================================================");
 
     try {
@@ -114,8 +123,12 @@ export class ScanOrchestrator {
       );
 
       // 4. Publish healthy configs
-      const unpostedHealthy = this.configRepo.getUnpostedHealthyConfigs(this.config.MAX_POSTS_PER_CYCLE);
-      logger.info({ unpostedCount: unpostedHealthy.length, maxLimit: this.config.MAX_POSTS_PER_CYCLE }, "Publishing unposted healthy configs...");
+      const maxLimit = this.settingsRepo
+        ? this.settingsRepo.getMaxPostsPerCycle()
+        : this.config.MAX_POSTS_PER_CYCLE;
+
+      const unpostedHealthy = this.configRepo.getUnpostedHealthyConfigs(maxLimit);
+      logger.info({ unpostedCount: unpostedHealthy.length, maxLimit }, "Publishing unposted healthy configs...");
 
       const postedCount = await this.publisher.publishBatch(unpostedHealthy);
 
@@ -143,23 +156,65 @@ export class ScanOrchestrator {
   }
 
   start(): void {
+    const intervalMinutes = this.settingsRepo
+      ? this.settingsRepo.getScanIntervalMinutes()
+      : this.config.SCAN_INTERVAL_MINUTES;
+
     logger.info(
-      { intervalMinutes: this.config.SCAN_INTERVAL_MINUTES },
+      { intervalMinutes },
       "Starting scheduler: will scan channels every interval."
     );
 
-    // Initial run
-    this.runCycle().catch((err) => {
-      logger.error({ err: err.message }, "Initial scan cycle failed");
-    });
+    // Initial run if active
+    if (!this.settingsRepo || this.settingsRepo.isMonitoringActive()) {
+      this.runCycle().catch((err) => {
+        logger.error({ err: err.message }, "Initial scan cycle failed");
+      });
+    }
 
-    // Schedule recurring
-    const intervalMs = this.config.SCAN_INTERVAL_MINUTES * 60 * 1000;
+    this.rescheduleTimer(intervalMinutes);
+  }
+
+  rescheduleTimer(minutes?: number): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+
+    const intervalMinutes = minutes ?? (this.settingsRepo
+      ? this.settingsRepo.getScanIntervalMinutes()
+      : this.config.SCAN_INTERVAL_MINUTES);
+
+    const intervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
     this.timer = setInterval(() => {
       this.runCycle().catch((err) => {
         logger.error({ err: err.message }, "Scheduled scan cycle failed");
       });
     }, intervalMs);
+
+    logger.info({ intervalMinutes }, "Scheduled scan timer rescheduled");
+  }
+
+  pauseMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setMonitoringActive(false);
+    }
+    logger.info("Monitoring paused by user");
+  }
+
+  resumeMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setMonitoringActive(true);
+    }
+    logger.info("Monitoring resumed by user");
+  }
+
+  isMonitoringActive(): boolean {
+    return this.settingsRepo ? this.settingsRepo.isMonitoringActive() : true;
+  }
+
+  async triggerManualScan(): Promise<void> {
+    await this.runCycle(true);
   }
 
   stop(): void {

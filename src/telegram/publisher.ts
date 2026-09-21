@@ -1,17 +1,25 @@
 import { TelegramClient } from "telegram";
 import { Config } from "../config/env.js";
 import { ConfigRepository, ConfigRecord } from "../database/repositories/config.repo.js";
+import { SettingsRepository } from "../database/repositories/settings.repo.js";
 import { logger } from "../logger.js";
 
 export class TelegramPublisher {
   private client: TelegramClient;
   private configRepo: ConfigRepository;
+  private settingsRepo?: SettingsRepository;
   private config: Config;
 
-  constructor(client: TelegramClient, configRepo: ConfigRepository, config: Config) {
+  constructor(
+    client: TelegramClient,
+    configRepo: ConfigRepository,
+    config: Config,
+    settingsRepo?: SettingsRepository
+  ) {
     this.client = client;
     this.configRepo = configRepo;
     this.config = config;
+    this.settingsRepo = settingsRepo;
   }
 
   async publishHealthyConfig(configRecord: ConfigRecord): Promise<boolean> {
@@ -63,7 +71,7 @@ export class TelegramPublisher {
     return publishedCount;
   }
 
-  private formatConfigMessage(record: ConfigRecord): string {
+  formatConfigMessage(record: ConfigRecord): string {
     const latency = record.latency_ms ?? 0;
     let speedBadge = "🟢 Fast";
     if (latency > 600) {
@@ -84,9 +92,19 @@ export class TelegramPublisher {
 
     const security = details.security && details.security !== "none" ? ` (${details.security})` : "";
     const transport = details.transport && details.transport !== "tcp" ? ` (${details.transport})` : "";
-    const channelTag = this.config.CUSTOM_CONFIG_REMARKS.startsWith("@")
-      ? this.config.CUSTOM_CONFIG_REMARKS
-      : `@${this.config.CUSTOM_CONFIG_REMARKS}`;
+
+    const rawTag = this.settingsRepo
+      ? this.settingsRepo.getCustomRemarks()
+      : this.config.CUSTOM_CONFIG_REMARKS;
+    const channelTag = rawTag.startsWith("@") ? rawTag : `@${rawTag}`;
+
+    const includePing = this.settingsRepo
+      ? this.settingsRepo.isIncludePingInPost()
+      : this.config.INCLUDE_PING_IN_POST;
+
+    const customPostText = this.settingsRepo
+      ? this.settingsRepo.getCustomPostText()
+      : "";
 
     const lines = [
       "```",
@@ -95,8 +113,13 @@ export class TelegramPublisher {
       `📡 Protocol: \`${protocolName}${security || transport}\``,
     ];
 
-    if (this.config.INCLUDE_PING_IN_POST) {
+    if (includePing) {
       lines.push(`⚡️ Ping Latency: \`${latency} ms\` (${speedBadge})`);
+    }
+
+    if (customPostText) {
+      lines.push("");
+      lines.push(customPostText);
     }
 
     lines.push("");

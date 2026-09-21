@@ -25,8 +25,14 @@ A production-ready Node.js bot that scans all Telegram channels you have joined 
   - Tracks channels, message scan progress (`last_scanned_message_id`), config health history, and scan statistics.
 - **Automatic 10-Minute Scheduler**:
   - Runs automatically every 10 minutes with overlap protection (prevents concurrent scan runs).
+- **Interactive Telegram Bot Control Panel**:
+  - Control and configure the entire monitoring app directly from Telegram buttons (`/start` / `/menu`).
+  - **Start / Stop Monitoring**: Toggle automated scanning and scheduled jobs on/off in real-time.
+  - **On-Demand Scan**: Trigger immediate scan & post cycles with one click.
+  - **Settings Menu**: Toggle ping latency in posts, manage source channels (`+` / `-`), change scan intervals, adjust max posts per run, and customize post footer text.
+  - **Persistent Dynamic Settings**: Settings are saved in SQLite with an in-memory cache for ultra-fast access.
 - **Beautiful Telegram Formatting**:
-  - Formats healthy configs with protocol badge, server address, ping latency indicator (`🟢 Fast`, `🟡 Normal`, `🔴 High Latency`), source channel attribution, and 1-click copyable monospace code blocks.
+  - Formats healthy configs with protocol badge, optional ping latency indicator, custom footer notes, and 1-click copyable monospace code blocks.
 
 ---
 
