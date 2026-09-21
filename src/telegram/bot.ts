@@ -95,10 +95,31 @@ export class TelegramBotService {
     }
   }
 
+  // --- Persistent Bottom Reply Keyboard ---
+
+  private getPersistentReplyKeyboard(): any {
+    const isActive = this.settingsRepo.isMonitoringActive();
+    return {
+      keyboard: [
+        [
+          { text: "🚀 شروع اسکن فوری (Scan Now)" },
+          { text: isActive ? "⏹ توقف اسکن خودکار (Pause)" : "▶️ فعال‌سازی اسکن خودکار (Start)" },
+        ],
+        [
+          { text: "⚙️ تنظیمات (Settings)" },
+          { text: "📊 وضعیت سرور (Status)" },
+        ],
+      ],
+      resize_keyboard: true,
+      is_persistent: true,
+    };
+  }
+
   // --- Message Dispatcher ---
 
   private async handleMessage(msg: any): Promise<void> {
-    const text = msg.text.trim();
+    const rawText = msg.text.trim();
+    const text = rawText.toLowerCase();
     const chatId = msg.chat.id;
     const fromId = msg.from?.id?.toString() || "";
 
@@ -107,9 +128,9 @@ export class TelegramBotService {
       return;
     }
 
-    if (text === "/cancel") {
+    if (rawText === "/cancel" || text === "cancel" || text === "انصراف") {
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, "❌ Action cancelled.");
+      await this.sendMessage(chatId, "❌ عملیات لغو شد. (Action cancelled)");
       await this.sendMainMenu(chatId);
       return;
     }
@@ -118,7 +139,7 @@ export class TelegramBotService {
 
     // Handle conversational inputs
     if (state === "waiting_for_add_channel") {
-      const channels = text.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean);
+      const channels = rawText.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean);
       let addedCount = 0;
       for (const ch of channels) {
         if (this.settingsRepo.addAllowedChannel(ch)) {
@@ -128,66 +149,77 @@ export class TelegramBotService {
       this.userStates.set(fromId, "idle");
       await this.sendMessage(
         chatId,
-        `✅ Added ${addedCount} channel(s) to scan list!\n\n📋 Current Channels:\n${this.renderChannelList()}`
+        `✅ تعداد ${addedCount} کانال به لیست اضافه شد!\n\n📋 **لیست کانال‌های فعلی:**\n${this.renderChannelList()}`
       );
       await this.sendChannelsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_interval") {
-      const num = parseInt(text, 10);
+      const num = parseInt(rawText, 10);
       if (isNaN(num) || num < 1) {
-        await this.sendMessage(chatId, "⚠️ Please enter a valid positive number of minutes (e.g. `20`):");
+        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر به دقیقه وارد کنید (مثلاً `20`):");
         return;
       }
       this.settingsRepo.setScanIntervalMinutes(num);
       this.orchestrator.rescheduleTimer(num);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `⏱️ Scan interval updated to **${num} minutes**!`);
+      await this.sendMessage(chatId, `⏱️ زمان اسکن با موفقیت به **${num} دقیقه** تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_text") {
-      this.settingsRepo.setCustomPostText(text);
+      this.settingsRepo.setCustomPostText(rawText);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `✍️ Custom footer text saved:\n\n_${text}_`);
+      await this.sendMessage(chatId, `✍️ متن سفارشی انتهای پست ذخیره شد:\n\n_${rawText}_`);
       await this.sendSettingsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_remarks") {
-      this.settingsRepo.setCustomRemarks(text);
+      this.settingsRepo.setCustomRemarks(rawText);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `🏷️ Config remarks name updated to \`${text}\`!`);
+      await this.sendMessage(chatId, `🏷️ نام رمارک کانال به \`${rawText}\` تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_max_posts") {
-      const num = parseInt(text, 10);
+      const num = parseInt(rawText, 10);
       if (isNaN(num) || num < 1) {
-        await this.sendMessage(chatId, "⚠️ Please enter a valid number (e.g. `7`):");
+        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر وارد کنید (مثلاً `8`):");
         return;
       }
       this.settingsRepo.setMaxPostsPerCycle(num);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `🔢 Max posts per cycle updated to **${num}**!`);
+      await this.sendMessage(chatId, `🔢 حداکثر تعداد پست در هر اسکن به **${num}** تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
 
-    // Default commands
-    if (text.startsWith("/start") || text.startsWith("/menu") || text.startsWith("/help")) {
+    // Match Reply Keyboard or Slash Commands
+    if (text.includes("تنظیمات") || text.includes("settings") || text === "/settings") {
       this.userStates.set(fromId, "idle");
-      await this.sendMainMenu(chatId);
-    } else if (text.startsWith("/scan")) {
-      await this.triggerScan(chatId);
-    } else if (text.startsWith("/settings")) {
       await this.sendSettingsMenu(chatId);
-    } else if (text.startsWith("/status")) {
+    } else if (text.includes("شروع اسکن فوری") || text.includes("scan now") || text === "/scan") {
+      await this.triggerScan(chatId);
+    } else if (text.includes("توقف اسکن") || text.includes("فعال‌سازی اسکن") || text.includes("toggle") || text === "/toggle") {
+      const isActive = this.settingsRepo.isMonitoringActive();
+      if (isActive) {
+        this.orchestrator.pauseMonitoring();
+        await this.sendMessage(chatId, "🔴 اسکن خودکار متوقف شد. (Monitoring Paused)", undefined, this.getPersistentReplyKeyboard());
+      } else {
+        this.orchestrator.resumeMonitoring();
+        await this.sendMessage(chatId, "🟢 اسکن خودکار فعال شد. (Monitoring Resumed)", undefined, this.getPersistentReplyKeyboard());
+      }
+      await this.sendMainMenu(chatId);
+    } else if (text.includes("وضعیت") || text.includes("status") || text === "/status") {
       await this.sendStatus(chatId);
+    } else if (text.includes("راهنما") || text.includes("help") || text === "/help") {
+      await this.sendHelp(chatId);
     } else {
+      this.userStates.set(fromId, "idle");
       await this.sendMainMenu(chatId);
     }
   }
@@ -209,7 +241,7 @@ export class TelegramBotService {
 
     if (data === "menu_main") {
       this.userStates.set(fromId, "idle");
-      await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuKeyboard());
+      await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuInlineKeyboard());
     } else if (data === "menu_settings") {
       this.userStates.set(fromId, "idle");
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
@@ -220,16 +252,18 @@ export class TelegramBotService {
       } else {
         this.orchestrator.resumeMonitoring();
       }
-      await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuKeyboard());
+      await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuInlineKeyboard());
+      // Refresh bottom persistent keyboard
+      await this.sendMessage(chatId, isCurrentlyActive ? "🔴 وضعیت اسکن: متوقف شد" : "🟢 وضعیت اسکن: فعال شد", undefined, this.getPersistentReplyKeyboard());
     } else if (data === "trigger_scan") {
-      await this.sendMessage(chatId, "🔍 Starting VPN scan & connectivity check cycle now...");
+      await this.sendMessage(chatId, "🔍 در حال اسکن کانال‌ها و تست اتصال کانفیگ‌ها...");
       this.orchestrator
         .triggerManualScan()
         .then(() => {
-          this.sendMessage(chatId, "✅ Scan and publishing cycle completed successfully!");
+          this.sendMessage(chatId, "✅ اسکن و ارسال کانفیگ‌های سالم با موفقیت انجام شد!");
         })
         .catch((err) => {
-          this.sendMessage(chatId, `❌ Error during scan cycle: ${err.message}`);
+          this.sendMessage(chatId, `❌ خطا در اجرای اسکن: ${err.message}`);
         });
     } else if (data === "toggle_ping") {
       const current = this.settingsRepo.isIncludePingInPost();
@@ -241,15 +275,15 @@ export class TelegramBotService {
       this.userStates.set(fromId, "waiting_for_add_channel");
       await this.sendMessage(
         chatId,
-        "➕ **Add Channels to Scan**\n\n" +
-          "Send the channel username or ID (e.g. `@proxy_channel` or `proxy_channel` or comma-separated list):\n\n" +
-          "_(Type /cancel to abort)_"
+        "➕ **افزودن کانال جدید برای اسکن**\n\n" +
+          "آیدی یا یوزرنیم کانال مورد نظر را ارسال کنید (مثلاً `@proxy_channel` یا چندین کانال با کاما):\n\n" +
+          "_(برای لغو عبارت /cancel را ارسال کنید)_"
       );
     } else if (data === "menu_remove_channel") {
       await this.editMessage(
         chatId,
         messageId,
-        "➖ **Select a channel to remove:**",
+        "➖ **روی کانال مورد نظر کلیک کنید تا حذف شود:**",
         this.getRemoveChannelsKeyboard()
       );
     } else if (data.startsWith("del_chan:")) {
@@ -258,14 +292,14 @@ export class TelegramBotService {
       await this.editMessage(
         chatId,
         messageId,
-        `✅ Removed \`${targetChan}\`!\n\n` + this.getChannelsMenuText(),
+        `✅ کانال \`${targetChan}\` با موفقیت حذف شد!\n\n` + this.getChannelsMenuText(),
         this.getChannelsMenuKeyboard()
       );
     } else if (data === "menu_interval") {
       await this.editMessage(
         chatId,
         messageId,
-        `⏱️ **Change Scan & Post Interval**\n\nCurrent: **Every ${this.settingsRepo.getScanIntervalMinutes()} minutes**\n\nSelect a preset or enter custom:`,
+        `⏱️ **تغییر زمان‌بندی اسکن و ارسال**\n\nزمان فعلی: **هر ${this.settingsRepo.getScanIntervalMinutes()} دقیقه**\n\nیک زمان را انتخاب کنید یا مقدار دلخواه بزنید:`,
         this.getIntervalKeyboard()
       );
     } else if (data.startsWith("set_int:")) {
@@ -277,33 +311,33 @@ export class TelegramBotService {
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
     } else if (data === "custom_interval") {
       this.userStates.set(fromId, "waiting_for_custom_interval");
-      await this.sendMessage(chatId, "⏱️ Send the scan interval in minutes (e.g. `20` or `45`):\n\n_(Type /cancel to abort)_");
+      await this.sendMessage(chatId, "⏱️ زمان اسکن را به دقیقه ارسال کنید (مثلاً `20` یا `45`):\n\n_(برای لغو /cancel بزنید)_");
     } else if (data === "menu_footer_text") {
       const current = this.settingsRepo.getCustomPostText();
       const textMsg =
-        `✍️ **Custom Post Footer Text**\n\n` +
-        (current ? `Current Text:\n_${current}_\n\n` : `_No custom footer text set._\n\n`) +
-        `This text is inserted at the bottom of channel posts before \`${this.settingsRepo.getCustomRemarks()}\`.`;
+        `✍️ **متن دلخواه انتهای پست‌ها**\n\n` +
+        (current ? `متن فعلی:\n_${current}_\n\n` : `_هیچ متن سفارشی تنظیم نشده است._\n\n`) +
+        `این متن با یک خط فاصله قبل از آیدی کانال (\`${this.settingsRepo.getCustomRemarks()}\`) قرار می‌گیرد.`;
       await this.editMessage(chatId, messageId, textMsg, this.getFooterTextKeyboard());
     } else if (data === "set_footer_text") {
       this.userStates.set(fromId, "waiting_for_custom_text");
       await this.sendMessage(
         chatId,
-        "✍️ Send the text to insert at the bottom of posts (before the channel tag):\n\n_(Type /cancel to abort)_"
+        "✍️ متنی که می‌خواهید در انتهای پست‌ها (قبل از آیدی کانال) قرار بگیرد را ارسال کنید:\n\n_(برای لغو /cancel بزنید)_"
       );
     } else if (data === "clear_footer_text") {
       this.settingsRepo.setCustomPostText("");
       await this.editMessage(
         chatId,
         messageId,
-        "🗑️ Custom footer text cleared!\n\n" + this.getSettingsMenuText(),
+        "🗑️ متن سفارشی حذف شد!\n\n" + this.getSettingsMenuText(),
         this.getSettingsMenuKeyboard()
       );
     } else if (data === "menu_max_posts") {
       await this.editMessage(
         chatId,
         messageId,
-        `🔢 **Max Posts per Scan Cycle**\n\nCurrent: **${this.settingsRepo.getMaxPostsPerCycle()} posts**\n\nSelect max configs to publish per cycle:`,
+        `🔢 **حداکثر تعداد پست در هر اسکن**\n\nتعداد فعلی: **${this.settingsRepo.getMaxPostsPerCycle()} پست**\n\nتعداد کانفیگ سالم برای ارسال در هر دور را انتخاب کنید:`,
         this.getMaxPostsKeyboard()
       );
     } else if (data.startsWith("set_max:")) {
@@ -314,12 +348,12 @@ export class TelegramBotService {
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
     } else if (data === "custom_max_posts") {
       this.userStates.set(fromId, "waiting_for_custom_max_posts");
-      await this.sendMessage(chatId, "🔢 Send max number of configs to post per cycle (e.g. `8`):\n\n_(Type /cancel to abort)_");
+      await this.sendMessage(chatId, "🔢 حداکثر تعداد پست برای ارسال در هر اسکن را ارسال کنید (مثلاً `8`):\n\n_(برای لغو /cancel بزنید)_");
     } else if (data === "menu_remarks") {
       this.userStates.set(fromId, "waiting_for_custom_remarks");
       await this.sendMessage(
         chatId,
-        `🏷️ **Change Config Remarks Name**\n\nCurrent: \`${this.settingsRepo.getCustomRemarks()}\`\n\nSend the new remarks name (e.g. \`@connexy_private\`):\n\n_(Type /cancel to abort)_`
+        `🏷️ **تغییر نام رمارک کانفیگ‌ها**\n\nنام فعلی: \`${this.settingsRepo.getCustomRemarks()}\`\n\nنام رمارک جدید را ارسال کنید (مثلاً \`@connexy_private\`):\n\n_(برای لغو /cancel بزنید)_`
       );
     } else if (data === "menu_status") {
       await this.sendStatus(chatId);
@@ -332,42 +366,42 @@ export class TelegramBotService {
     const isActive = this.settingsRepo.isMonitoringActive();
     const interval = this.settingsRepo.getScanIntervalMinutes();
     const channels = this.settingsRepo.getAllowedChannels();
-    const pingStatus = this.settingsRepo.isIncludePingInPost() ? "🟢 ON" : "🔴 OFF";
-    const customText = this.settingsRepo.getCustomPostText() ? "✅ Set" : "None";
+    const pingStatus = this.settingsRepo.isIncludePingInPost() ? "🟢 روشن (ON)" : "🔴 خاموش (OFF)";
+    const customText = this.settingsRepo.getCustomPostText() ? "✅ تنظیم شده" : "ندارد";
 
     return (
-      `🤖 **Telegram VPN Monitor Control Panel**\n\n` +
-      `⚡ **Status:** ${isActive ? "🟢 `RUNNING`" : "🔴 `PAUSED`"}\n` +
-      `⏱️ **Scan Schedule:** Every **${interval} minutes**\n` +
-      `📢 **Monitored Channels:** **${channels.length > 0 ? channels.length : "All Joined"}**\n` +
-      `🎯 **Target Channel:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
-      `📡 **Ping in Posts:** ${pingStatus}\n` +
-      `✍️ **Custom Footer:** ${customText}\n` +
-      `🏷️ **Remarks:** \`${this.settingsRepo.getCustomRemarks()}\``
+      `🤖 **کنترل پنل ربات مانیتورینگ VPN**\n\n` +
+      `⚡ **وضعیت ربات:** ${isActive ? "🟢 `فعال و در حال اجرا`" : "🔴 `متوقف شده`"}\n` +
+      `⏱️ **فاصله زمانی اسکن:** هر **${interval} دقیقه**\n` +
+      `📢 **کانال‌های تحت بررسی:** **${channels.length > 0 ? `${channels.length} کانال` : "تمام کانال‌های عضو شده"}**\n` +
+      `🎯 **کانال مقصد:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
+      `📡 **نمایش پینگ در پست:** ${pingStatus}\n` +
+      `✍️ **متن دلخواه قبل آیدی:** ${customText}\n` +
+      `🏷️ **رمارک کانفیگ‌ها:** \`${this.settingsRepo.getCustomRemarks()}\``
     );
   }
 
-  private getMainMenuKeyboard(): any {
+  private getMainMenuInlineKeyboard(): any {
     const isActive = this.settingsRepo.isMonitoringActive();
     return {
       inline_keyboard: [
         [
           {
-            text: isActive ? "⏹️ Pause Monitoring" : "▶️ Start Monitoring",
+            text: isActive ? "⏹ توقف اسکن خودکار" : "▶️ فعال‌سازی اسکن خودکار",
             callback_data: "toggle_monitoring",
           },
         ],
         [
-          { text: "🚀 Run Immediate Scan", callback_data: "trigger_scan" },
-          { text: "📊 Status", callback_data: "menu_status" },
+          { text: "🚀 اسکن فوری اکنون", callback_data: "trigger_scan" },
+          { text: "📊 وضعیت سرور", callback_data: "menu_status" },
         ],
-        [{ text: "⚙️ Settings", callback_data: "menu_settings" }],
+        [{ text: "⚙️ ورود به تنظیمات", callback_data: "menu_settings" }],
       ],
     };
   }
 
   private getSettingsMenuText(): string {
-    const ping = this.settingsRepo.isIncludePingInPost() ? "🟢 Enabled" : "🔴 Disabled";
+    const ping = this.settingsRepo.isIncludePingInPost() ? "🟢 روشن (ON)" : "🔴 خاموش (OFF)";
     const interval = this.settingsRepo.getScanIntervalMinutes();
     const channels = this.settingsRepo.getAllowedChannels();
     const maxPosts = this.settingsRepo.getMaxPostsPerCycle();
@@ -375,14 +409,14 @@ export class TelegramBotService {
     const customText = this.settingsRepo.getCustomPostText();
 
     return (
-      `⚙️ **VPN Monitor Settings**\n\n` +
-      `⚡ **Ping Latency in Posts:** ${ping}\n` +
-      `⏱️ **Scan Interval:** Every ${interval} mins\n` +
-      `📢 **Channels (${channels.length}):** ${channels.join(", ") || "All Joined"}\n` +
-      `🔢 **Max Posts per Cycle:** ${maxPosts}\n` +
-      `🏷️ **Remarks Name:** \`${remarks}\`\n` +
-      `✍️ **Footer Text:** ${customText ? `"${customText}"` : "_None_"}\n\n` +
-      `Select an option below to modify:`
+      `⚙️ **تنظیمات ربات مانیتورینگ**\n\n` +
+      `⚡ **نمایش پینگ در پست:** ${ping}\n` +
+      `⏱️ **زمان اسکن:** هر ${interval} دقیقه\n` +
+      `📢 **کانال‌ها (${channels.length}):** ${channels.join(", ") || "همه کانال‌ها"}\n` +
+      `🔢 **حداکثر پست در هر اسکن:** ${maxPosts}\n` +
+      `🏷️ **نام رمارک کانفیگ:** \`${remarks}\`\n` +
+      `✍️ **متن دلخواه انتهای پست:** ${customText ? `"${customText}"` : "_تنظیم نشده_"}\n\n` +
+      `گزینه مورد نظر برای تغییر را انتخاب کنید:`
     );
   }
 
@@ -395,16 +429,16 @@ export class TelegramBotService {
       inline_keyboard: [
         [
           {
-            text: `⚡ Ping in Post: ${pingActive ? "🟢 ON" : "🔴 OFF"}`,
+            text: `⚡ نمایش پینگ در پست: ${pingActive ? "🟢 روشن" : "🔴 خاموش"}`,
             callback_data: "toggle_ping",
           },
         ],
-        [{ text: "📢 Manage Channels", callback_data: "menu_channels" }],
-        [{ text: `⏱️ Scan Interval (${interval}m)`, callback_data: "menu_interval" }],
-        [{ text: "✍️ Custom Footer Text", callback_data: "menu_footer_text" }],
-        [{ text: `🔢 Max Posts (${maxPosts})`, callback_data: "menu_max_posts" }],
-        [{ text: "🏷️ Edit Remarks Name", callback_data: "menu_remarks" }],
-        [{ text: "🔙 Back to Main Menu", callback_data: "menu_main" }],
+        [{ text: "📢 مدیریت کانال‌های اسکن", callback_data: "menu_channels" }],
+        [{ text: `⏱️ زمان اسکن (${interval} دقیقه)`, callback_data: "menu_interval" }],
+        [{ text: "✍️ متن دلخواه انتهای پست", callback_data: "menu_footer_text" }],
+        [{ text: `🔢 حداکثر تعداد پست (${maxPosts} عدد)`, callback_data: "menu_max_posts" }],
+        [{ text: "🏷️ ویرایش رمارک کانفیگ", callback_data: "menu_remarks" }],
+        [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "menu_main" }],
       ],
     };
   }
@@ -412,34 +446,34 @@ export class TelegramBotService {
   private getChannelsMenuText(): string {
     const channels = this.settingsRepo.getAllowedChannels();
     return (
-      `📢 **Monitored Source Channels**\n\n` +
+      `📢 **کانال‌های تحت بررسی برای استخراج کانفیگ**\n\n` +
       (channels.length > 0
         ? channels.map((c, i) => `${i + 1}. \`${c}\``).join("\n")
-        : `_No explicit channels set (scanning all joined channels)_`) +
-      `\n\nUse buttons below to add or remove channels:`
+        : `_هیچ کانال خاصی تنظیم نشده (تمام کانال‌های عضو شده اسکن می‌شوند)_`) +
+      `\n\nبرای افزودن یا حذف کانال از دکمه‌های زیر استفاده کنید:`
     );
   }
 
   private getChannelsMenuKeyboard(): any {
     const channels = this.settingsRepo.getAllowedChannels();
     const keyboard = [
-      [{ text: "➕ Add Channel", callback_data: "add_channel" }],
+      [{ text: "➕ افزودن کانال جدید", callback_data: "add_channel" }],
     ];
 
     if (channels.length > 0) {
-      keyboard.push([{ text: "➖ Remove Channel", callback_data: "menu_remove_channel" }]);
+      keyboard.push([{ text: "➖ حذف کانال", callback_data: "menu_remove_channel" }]);
     }
 
-    keyboard.push([{ text: "🔙 Back to Settings", callback_data: "menu_settings" }]);
+    keyboard.push([{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }]);
     return { inline_keyboard: keyboard };
   }
 
   private getRemoveChannelsKeyboard(): any {
     const channels = this.settingsRepo.getAllowedChannels();
     const rows = channels.map((c) => [
-      { text: `🗑️ ${c}`, callback_data: `del_chan:${c}` },
+      { text: `🗑️ حذف ${c}`, callback_data: `del_chan:${c}` },
     ]);
-    rows.push([{ text: "🔙 Cancel", callback_data: "menu_channels" }]);
+    rows.push([{ text: "🔙 انصراف", callback_data: "menu_channels" }]);
     return { inline_keyboard: rows };
   }
 
@@ -447,31 +481,31 @@ export class TelegramBotService {
     return {
       inline_keyboard: [
         [
-          { text: "5 min", callback_data: "set_int:5" },
-          { text: "10 min", callback_data: "set_int:10" },
-          { text: "15 min", callback_data: "set_int:15" },
+          { text: "5 دقیقه", callback_data: "set_int:5" },
+          { text: "10 دقیقه", callback_data: "set_int:10" },
+          { text: "15 دقیقه", callback_data: "set_int:15" },
         ],
         [
-          { text: "30 min", callback_data: "set_int:30" },
-          { text: "60 min", callback_data: "set_int:60" },
-          { text: "120 min", callback_data: "set_int:120" },
+          { text: "30 دقیقه", callback_data: "set_int:30" },
+          { text: "60 دقیقه", callback_data: "set_int:60" },
+          { text: "120 دقیقه", callback_data: "set_int:120" },
         ],
-        [{ text: "✏️ Custom Minutes", callback_data: "custom_interval" }],
-        [{ text: "🔙 Back to Settings", callback_data: "menu_settings" }],
+        [{ text: "✏️ وارد کردن عدد دلخواه", callback_data: "custom_interval" }],
+        [{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }],
       ],
     };
   }
 
   private getFooterTextKeyboard(): any {
     const hasText = !!this.settingsRepo.getCustomPostText();
-    const buttons = [{ text: "✏️ Set Text", callback_data: "set_footer_text" }];
+    const buttons = [{ text: "✏️ تنظیم متن جدید", callback_data: "set_footer_text" }];
     if (hasText) {
-      buttons.push({ text: "🗑️ Clear Text", callback_data: "clear_footer_text" });
+      buttons.push({ text: "🗑️ پاک کردن متن", callback_data: "clear_footer_text" });
     }
     return {
       inline_keyboard: [
         buttons,
-        [{ text: "🔙 Back to Settings", callback_data: "menu_settings" }],
+        [{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }],
       ],
     };
   }
@@ -480,13 +514,13 @@ export class TelegramBotService {
     return {
       inline_keyboard: [
         [
-          { text: "1", callback_data: "set_max:1" },
-          { text: "3", callback_data: "set_max:3" },
-          { text: "5", callback_data: "set_max:5" },
-          { text: "10", callback_data: "set_max:10" },
+          { text: "1 عدد", callback_data: "set_max:1" },
+          { text: "3 عدد", callback_data: "set_max:3" },
+          { text: "5 عدد", callback_data: "set_max:5" },
+          { text: "10 عدد", callback_data: "set_max:10" },
         ],
-        [{ text: "✏️ Custom Limit", callback_data: "custom_max_posts" }],
-        [{ text: "🔙 Back to Settings", callback_data: "menu_settings" }],
+        [{ text: "✏️ وارد کردن عدد دلخواه", callback_data: "custom_max_posts" }],
+        [{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }],
       ],
     };
   }
@@ -495,32 +529,47 @@ export class TelegramBotService {
     const channels = this.settingsRepo.getAllowedChannels();
     return channels.length > 0
       ? channels.map((c, i) => `${i + 1}. \`${c}\``).join("\n")
-      : "_All joined channels_";
+      : "_همه کانال‌های عضو شده_";
   }
 
   // --- Telegram API Helpers ---
 
   private async sendMainMenu(chatId: string | number): Promise<void> {
-    await this.sendMessage(chatId, this.getMainMenuText(), this.getMainMenuKeyboard());
+    await this.sendMessage(
+      chatId,
+      this.getMainMenuText(),
+      this.getMainMenuInlineKeyboard(),
+      this.getPersistentReplyKeyboard()
+    );
   }
 
   private async sendSettingsMenu(chatId: string | number): Promise<void> {
-    await this.sendMessage(chatId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
+    await this.sendMessage(
+      chatId,
+      this.getSettingsMenuText(),
+      this.getSettingsMenuKeyboard(),
+      this.getPersistentReplyKeyboard()
+    );
   }
 
   private async sendChannelsMenu(chatId: string | number): Promise<void> {
-    await this.sendMessage(chatId, this.getChannelsMenuText(), this.getChannelsMenuKeyboard());
+    await this.sendMessage(
+      chatId,
+      this.getChannelsMenuText(),
+      this.getChannelsMenuKeyboard(),
+      this.getPersistentReplyKeyboard()
+    );
   }
 
   private async triggerScan(chatId: string | number): Promise<void> {
-    await this.sendMessage(chatId, "🔍 Starting VPN scan & connectivity check cycle now...");
+    await this.sendMessage(chatId, "🔍 در حال اسکن کانال‌ها و تست اتصال کانفیگ‌ها...", undefined, this.getPersistentReplyKeyboard());
     this.orchestrator
       .triggerManualScan()
       .then(() => {
-        this.sendMessage(chatId, "✅ Scan and publishing cycle completed successfully!");
+        this.sendMessage(chatId, "✅ اسکن و ارسال کانفیگ‌های سالم با موفقیت انجام شد!", undefined, this.getPersistentReplyKeyboard());
       })
       .catch((err) => {
-        this.sendMessage(chatId, `❌ Error during scan cycle: ${err.message}`);
+        this.sendMessage(chatId, `❌ خطا در اجرای اسکن: ${err.message}`, undefined, this.getPersistentReplyKeyboard());
       });
   }
 
@@ -532,15 +581,32 @@ export class TelegramBotService {
 
     await this.sendMessage(
       chatId,
-      `📊 **VPN Monitor Status**\n\n` +
-        `⚡ **Daemon Status:** ${isActive ? "🟢 ACTIVE" : "🔴 PAUSED"}\n` +
-        `📡 **Channels in DB:** ${allChannels.length}\n` +
-        `🟢 **Unposted Healthy Configs:** ${unposted.length}\n` +
-        `🎯 **Target Channel:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
-        `⏱️ **Scan Interval:** ${interval} mins`,
+      `📊 **وضعیت سرور و ربات**\n\n` +
+        `⚡ **وضعیت اجرای اسکن:** ${isActive ? "🟢 فعال و خودکار" : "🔴 متوقف شده"}\n` +
+        `📡 **تعداد کانال‌ها در دیتابیس:** ${allChannels.length}\n` +
+        `🟢 **کانفیگ‌های سالم آماده ارسال:** ${unposted.length}\n` +
+        `🎯 **کانال ارسال:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
+        `⏱️ **زمان‌بندی اسکن:** هر ${interval} دقیقه`,
       {
-        inline_keyboard: [[{ text: "🔙 Back to Menu", callback_data: "menu_main" }]],
-      }
+        inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "menu_main" }]],
+      },
+      this.getPersistentReplyKeyboard()
+    );
+  }
+
+  private async sendHelp(chatId: string | number): Promise<void> {
+    await this.sendMessage(
+      chatId,
+      `❓ **راهنمای استفاده از ربات مانیتورینگ VPN**\n\n` +
+        `1️⃣ **🚀 شروع اسکن فوری:** یک دور اسکن و تست کانفیگ‌ها را بلافاصله اجرا می‌کند.\n` +
+        `2️⃣ **⏹ توقف / شروع خودکار:** اسکن دوره‌ای خودکار را متوقف یا مجدداً فعال می‌کند.\n` +
+        `3️⃣ **⚙️ تنظیمات:** تمام تنظیمات پینگ، کانال‌ها، زمان‌بندی و متن انتهای پست را مدیریت می‌کند.\n` +
+        `4️⃣ **📊 وضعیت سرور:** آمار لحظه‌ای کانفیگ‌ها و وضعیت را نشان می‌دهد.\n\n` +
+        `_برای بازگشت به منوی اصلی از دکمه‌های زیر استفاده کنید._`,
+      {
+        inline_keyboard: [[{ text: "⚙️ ورود به تنظیمات", callback_data: "menu_settings" }]],
+      },
+      this.getPersistentReplyKeyboard()
     );
   }
 
@@ -549,17 +615,31 @@ export class TelegramBotService {
     return !!fromId && this.config.ADMIN_USER_IDS.includes(fromId);
   }
 
-  private async sendMessage(chatId: string | number, text: string, replyMarkup?: any): Promise<void> {
+  private async sendMessage(
+    chatId: string | number,
+    text: string,
+    inlineMarkup?: any,
+    replyKeyboard?: any
+  ): Promise<void> {
     try {
+      const body: any = {
+        chat_id: chatId,
+        text,
+        parse_mode: "Markdown",
+      };
+
+      if (inlineMarkup) {
+        body.reply_markup = inlineMarkup;
+      } else if (replyKeyboard) {
+        body.reply_markup = replyKeyboard;
+      } else {
+        body.reply_markup = this.getPersistentReplyKeyboard();
+      }
+
       await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: "Markdown",
-          reply_markup: replyMarkup,
-        }),
+        body: JSON.stringify(body),
       });
     } catch (err: any) {
       logger.error({ err: err.message, chatId }, "Failed to send bot message");
@@ -586,7 +666,7 @@ export class TelegramBotService {
       });
     } catch (err: any) {
       logger.debug({ err: err.message }, "Error editing message, sending new message instead");
-      await this.sendMessage(chatId, text, replyMarkup);
+      await this.sendMessage(chatId, text, replyMarkup, this.getPersistentReplyKeyboard());
     }
   }
 

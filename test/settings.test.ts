@@ -114,7 +114,8 @@ describe("Dynamic Settings & Custom Footer Text", () => {
     const formatted = publisher.formatConfigMessage(mockRecord);
 
     // Verify presence of ping
-    assert.ok(formatted.includes("⚡️ Ping Latency: `150 ms` (🟢 Fast)"));
+    assert.ok(formatted.includes("⚡️ پینگ: `150 ms` (🟢 Fast)"));
+    assert.ok(formatted.includes("📡 پروتکل: `VLESS (reality)`"));
 
     // Verify presence of custom footer text
     assert.ok(formatted.includes("🚀 Join our VIP network for more fast proxies!"));
@@ -150,7 +151,8 @@ describe("Dynamic Settings & Custom Footer Text", () => {
 
     const formatted = publisher.formatConfigMessage(mockRecord);
 
-    assert.strictEqual(formatted.includes("Ping Latency"), false);
+    assert.strictEqual(formatted.includes("پینگ:"), false);
+    assert.ok(formatted.includes("📡 پروتکل: `VLESS (reality)`"));
     assert.ok(formatted.endsWith("@connexy_private"));
   });
 });

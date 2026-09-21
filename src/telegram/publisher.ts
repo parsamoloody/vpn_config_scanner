@@ -110,11 +110,11 @@ export class TelegramPublisher {
       "```",
       record.raw_config,
       "```",
-      `📡 Protocol: \`${protocolName}${security || transport}\``,
+      `📡 پروتکل: \`${protocolName}${security || transport}\``,
     ];
 
     if (includePing) {
-      lines.push(`⚡️ Ping Latency: \`${latency} ms\` (${speedBadge})`);
+      lines.push(`⚡️ پینگ: \`${latency} ms\` (${speedBadge})`);
     }
 
     if (customPostText) {
