@@ -55,6 +55,8 @@ export function parseVpnConfig(rawUri: string, customRemarks?: string): ParsedVp
       return parseHysteria2(trimmed);
     } else if (trimmed.startsWith("tuic://")) {
       return parseTuic(trimmed);
+    } else if (trimmed.includes("proxy?") || trimmed.includes("socks?")) {
+      return parseProxyConfig(trimmed);
     }
 
     return null;
@@ -326,4 +328,90 @@ function parseTuic(uri: string): ParsedVpnConfig | null {
     raw: uri,
     normalizedHash,
   };
+}
+
+export function parseMtproto(uri: string): ParsedVpnConfig | null {
+  try {
+    const normalizedUri = uri
+      .replace(/^tg:\/\/proxy\?/i, "https://t.me/proxy?")
+      .replace(/^http:\/\//i, "https://");
+    const url = new URL(normalizedUri);
+    const server = url.searchParams.get("server")?.trim();
+    const portStr = url.searchParams.get("port")?.trim();
+    const secret = url.searchParams.get("secret")?.trim() || "";
+    const port = portStr ? parseInt(portStr, 10) : 443;
+
+    if (!server || isNaN(port)) return null;
+
+    const normalizedHash = generateNormalizedConfigHash({
+      protocol: "mtproto",
+      server,
+      port,
+      uuidOrPassword: secret,
+    });
+
+    const raw = `https://t.me/proxy?server=${encodeURIComponent(server)}&port=${port}&secret=${encodeURIComponent(secret)}`;
+
+    return {
+      protocol: "mtproto",
+      server,
+      port,
+      uuidOrPassword: secret,
+      raw,
+      normalizedHash,
+      extra: { secret },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseSocks(uri: string): ParsedVpnConfig | null {
+  try {
+    const normalizedUri = uri
+      .replace(/^tg:\/\/socks\?/i, "https://t.me/socks?")
+      .replace(/^http:\/\//i, "https://");
+    const url = new URL(normalizedUri);
+    const server = url.searchParams.get("server")?.trim();
+    const portStr = url.searchParams.get("port")?.trim();
+    const user = url.searchParams.get("user")?.trim() || "";
+    const pass = url.searchParams.get("pass")?.trim() || "";
+    const port = portStr ? parseInt(portStr, 10) : 1080;
+
+    if (!server || isNaN(port)) return null;
+
+    const auth = user ? `${user}:${pass}` : "";
+    const normalizedHash = generateNormalizedConfigHash({
+      protocol: "socks5",
+      server,
+      port,
+      uuidOrPassword: auth,
+    });
+
+    const raw = user
+      ? `https://t.me/socks?server=${encodeURIComponent(server)}&port=${port}&user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}`
+      : `https://t.me/socks?server=${encodeURIComponent(server)}&port=${port}`;
+
+    return {
+      protocol: "socks5",
+      server,
+      port,
+      uuidOrPassword: auth,
+      raw,
+      normalizedHash,
+      extra: { user, pass },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseProxyConfig(rawUri: string): ParsedVpnConfig | null {
+  const trimmed = rawUri.trim();
+  if (trimmed.includes("proxy?")) {
+    return parseMtproto(trimmed);
+  } else if (trimmed.includes("socks?")) {
+    return parseSocks(trimmed);
+  }
+  return null;
 }

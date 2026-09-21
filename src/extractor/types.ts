@@ -1,4 +1,4 @@
-export type VpnProtocol = "vless" | "vmess" | "trojan" | "shadowsocks" | "hysteria2" | "tuic";
+export type VpnProtocol = "vless" | "vmess" | "trojan" | "shadowsocks" | "hysteria2" | "tuic" | "mtproto" | "socks5";
 
 export interface ParsedVpnConfig {
   protocol: VpnProtocol;

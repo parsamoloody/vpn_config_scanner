@@ -24,12 +24,31 @@ const envSchema = z.object({
     .string()
     .default("")
     .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
+  ALLOWED_PROXY_CHANNELS: z
+    .string()
+    .default("")
+    .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
   EXCLUDED_CHANNELS: z
     .string()
     .default("")
     .transform((str) => (str ? str.split(",").map((s) => s.trim()).filter(Boolean) : [])),
   DATABASE_PATH: z.string().default(path.resolve(process.cwd(), "data/vpn_monitor.sqlite")),
   CUSTOM_CONFIG_REMARKS: z.string().default("@connexy_private"),
+  CUSTOM_PROXY_POST_TEXT: z.string().default(""),
+  CHECK_PING_BEFORE_POST_CONFIG: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((val) => {
+      if (typeof val === "boolean") return val;
+      return val.toLowerCase() === "true" || val === "1";
+    }),
+  CHECK_PING_BEFORE_POST_PROXY: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((val) => {
+      if (typeof val === "boolean") return val;
+      return val.toLowerCase() === "true" || val === "1";
+    }),
   INCLUDE_PING_IN_POST: z
     .union([z.boolean(), z.string()])
     .default(false)

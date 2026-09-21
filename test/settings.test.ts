@@ -29,6 +29,8 @@ describe("Dynamic Settings & Custom Footer Text", () => {
     EXCLUDED_CHANNELS: [],
     CUSTOM_CONFIG_REMARKS: "@connexy_private",
     INCLUDE_PING_IN_POST: false,
+    CHECK_PING_BEFORE_POST_CONFIG: true,
+    CHECK_PING_BEFORE_POST_PROXY: true,
     TELEGRAM_BOT_TOKEN: "",
     ADMIN_USER_IDS: [],
     DATABASE_PATH: testDbPath,
@@ -63,6 +65,22 @@ describe("Dynamic Settings & Custom Footer Text", () => {
   it("should toggle monitoring active state", () => {
     settingsRepo.setMonitoringActive(false);
     assert.strictEqual(settingsRepo.isMonitoringActive(), false);
+    assert.strictEqual(settingsRepo.isConfigMonitoringActive(), false);
+    assert.strictEqual(settingsRepo.isProxyMonitoringActive(), false);
+
+    settingsRepo.setConfigMonitoringActive(true);
+    assert.strictEqual(settingsRepo.isConfigMonitoringActive(), true);
+    assert.strictEqual(settingsRepo.isProxyMonitoringActive(), false);
+    assert.strictEqual(settingsRepo.isMonitoringActive(), true);
+
+    settingsRepo.setProxyMonitoringActive(true);
+    assert.strictEqual(settingsRepo.isProxyMonitoringActive(), true);
+    assert.strictEqual(settingsRepo.isConfigMonitoringActive(), true);
+
+    settingsRepo.setConfigMonitoringActive(false);
+    assert.strictEqual(settingsRepo.isConfigMonitoringActive(), false);
+    assert.strictEqual(settingsRepo.isProxyMonitoringActive(), true);
+    assert.strictEqual(settingsRepo.isMonitoringActive(), true);
 
     settingsRepo.setMonitoringActive(true);
     assert.strictEqual(settingsRepo.isMonitoringActive(), true);
@@ -154,5 +172,45 @@ describe("Dynamic Settings & Custom Footer Text", () => {
     assert.strictEqual(formatted.includes("پینگ:"), false);
     assert.ok(formatted.includes("📡 پروتکل: `VLESS (reality)`"));
     assert.ok(formatted.endsWith("@connexy_private"));
+  });
+
+  it("should manage proxy channels and proxy custom text dynamically", () => {
+    assert.deepStrictEqual(settingsRepo.getAllowedProxyChannels(), []);
+    assert.strictEqual(settingsRepo.getCustomProxyPostText(), "");
+
+    const added = settingsRepo.addAllowedProxyChannel("@mtproto_hub");
+    assert.strictEqual(added, true);
+    assert.deepStrictEqual(settingsRepo.getAllowedProxyChannels(), ["@mtproto_hub"]);
+
+    const duplicate = settingsRepo.addAllowedProxyChannel("@mtproto_hub");
+    assert.strictEqual(duplicate, false);
+
+    settingsRepo.setCustomProxyPostText("🔥 تست اتصال پروکسی‌های اختصاصی");
+    assert.strictEqual(settingsRepo.getCustomProxyPostText(), "🔥 تست اتصال پروکسی‌های اختصاصی");
+
+    const removed = settingsRepo.removeAllowedProxyChannel("@mtproto_hub");
+    assert.strictEqual(removed, true);
+    assert.deepStrictEqual(settingsRepo.getAllowedProxyChannels(), []);
+  });
+
+  it("should toggle check ping before post for configs and proxies independently", () => {
+    // Default should be true
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostConfig(), true);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostProxy(), true);
+
+    // Toggle config ping check off
+    settingsRepo.setCheckPingBeforePostConfig(false);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostConfig(), false);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostProxy(), true);
+
+    // Toggle proxy ping check off
+    settingsRepo.setCheckPingBeforePostProxy(false);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostConfig(), false);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostProxy(), false);
+
+    // Toggle config ping check back on
+    settingsRepo.setCheckPingBeforePostConfig(true);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostConfig(), true);
+    assert.strictEqual(settingsRepo.isCheckPingBeforePostProxy(), false);
   });
 });

@@ -43,12 +43,34 @@ export class SettingsRepository {
   // --- Strongly-typed Helpers ---
 
   isMonitoringActive(): boolean {
-    const val = this.get("is_monitoring_active", "true");
-    return val === "true";
+    return this.isConfigMonitoringActive() || this.isProxyMonitoringActive();
   }
 
   setMonitoringActive(active: boolean): void {
     this.set("is_monitoring_active", active ? "true" : "false");
+    this.set("is_config_monitoring_active", active ? "true" : "false");
+    this.set("is_proxy_monitoring_active", active ? "true" : "false");
+  }
+
+  isConfigMonitoringActive(): boolean {
+    const legacy = this.get("is_monitoring_active", "true");
+    const val = this.get("is_config_monitoring_active", legacy);
+    return val === "true";
+  }
+
+  setConfigMonitoringActive(active: boolean): void {
+    this.set("is_config_monitoring_active", active ? "true" : "false");
+    this.set("is_monitoring_active", (active || this.isProxyMonitoringActive()) ? "true" : "false");
+  }
+
+  isProxyMonitoringActive(): boolean {
+    const val = this.get("is_proxy_monitoring_active", "true");
+    return val === "true";
+  }
+
+  setProxyMonitoringActive(active: boolean): void {
+    this.set("is_proxy_monitoring_active", active ? "true" : "false");
+    this.set("is_monitoring_active", (this.isConfigMonitoringActive() || active) ? "true" : "false");
   }
 
   getScanIntervalMinutes(): number {
@@ -72,6 +94,27 @@ export class SettingsRepository {
     this.set("include_ping_in_post", include ? "true" : "false");
   }
 
+  isCheckPingBeforePostConfig(): boolean {
+    const defaultVal = this.config.CHECK_PING_BEFORE_POST_CONFIG !== false ? "true" : "false";
+    const val = this.get("check_ping_before_post_config", defaultVal);
+    return val === "true";
+  }
+
+  setCheckPingBeforePostConfig(enabled: boolean): void {
+    this.set("check_ping_before_post_config", enabled ? "true" : "false");
+  }
+
+  isCheckPingBeforePostProxy(): boolean {
+    const defaultVal = this.config.CHECK_PING_BEFORE_POST_PROXY !== false ? "true" : "false";
+    const val = this.get("check_ping_before_post_proxy", defaultVal);
+    return val === "true";
+  }
+
+  setCheckPingBeforePostProxy(enabled: boolean): void {
+    this.set("check_ping_before_post_proxy", enabled ? "true" : "false");
+  }
+
+  // --- Config Channels ---
   getAllowedChannels(): string[] {
     const defaultVal = JSON.stringify(this.config.ALLOWED_CHANNELS || []);
     const raw = this.get("allowed_channels", defaultVal);
@@ -115,12 +158,73 @@ export class SettingsRepository {
     return false;
   }
 
+  // --- Proxy Channels ---
+  getAllowedProxyChannels(): string[] {
+    const defaultVal = JSON.stringify(this.config.ALLOWED_PROXY_CHANNELS || []);
+    const raw = this.get("allowed_proxy_channels", defaultVal);
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // ignore
+    }
+    return this.config.ALLOWED_PROXY_CHANNELS || [];
+  }
+
+  setAllowedProxyChannels(channels: string[]): void {
+    const cleaned = channels.map((c) => c.trim()).filter(Boolean);
+    this.set("allowed_proxy_channels", JSON.stringify(cleaned));
+  }
+
+  addAllowedProxyChannel(channel: string): boolean {
+    const current = this.getAllowedProxyChannels();
+    const clean = channel.trim();
+    if (!clean) return false;
+
+    if (!current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      current.push(clean);
+      this.setAllowedProxyChannels(current);
+      return true;
+    }
+    return false;
+  }
+
+  removeAllowedProxyChannel(channel: string): boolean {
+    const current = this.getAllowedProxyChannels();
+    const clean = channel.trim().toLowerCase();
+    const filtered = current.filter((c) => c.trim().toLowerCase() !== clean);
+
+    if (filtered.length !== current.length) {
+      this.setAllowedProxyChannels(filtered);
+      return true;
+    }
+    return false;
+  }
+
+  // --- Custom Post Texts ---
   getCustomPostText(): string {
     return this.get("custom_post_text", "");
   }
 
   setCustomPostText(text: string): void {
     this.set("custom_post_text", text.trim());
+  }
+
+  getCustomConfigPostText(): string {
+    return this.getCustomPostText();
+  }
+
+  setCustomConfigPostText(text: string): void {
+    this.setCustomPostText(text);
+  }
+
+  getCustomProxyPostText(): string {
+    const defaultVal = this.config.CUSTOM_PROXY_POST_TEXT || "";
+    return this.get("custom_proxy_post_text", defaultVal);
+  }
+
+  setCustomProxyPostText(text: string): void {
+    this.set("custom_proxy_post_text", text.trim());
   }
 
   getCustomRemarks(): string {

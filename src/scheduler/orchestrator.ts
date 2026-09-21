@@ -41,9 +41,17 @@ export class ScanOrchestrator {
     this.publisher = new TelegramPublisher(client, configRepo, config, settingsRepo);
   }
 
-  async runCycle(isManualTrigger = false): Promise<void> {
-    if (!isManualTrigger && this.settingsRepo && !this.settingsRepo.isMonitoringActive()) {
-      logger.debug("Automated monitoring is currently paused. Skipping scheduled cycle.");
+  async runCycle(options?: { configs?: boolean; proxies?: boolean; isManual?: boolean }): Promise<void> {
+    const isManual = options?.isManual ?? false;
+    const shouldScanConfigs = options?.configs !== undefined
+      ? options.configs
+      : (this.settingsRepo ? this.settingsRepo.isConfigMonitoringActive() : true);
+    const shouldScanProxies = options?.proxies !== undefined
+      ? options.proxies
+      : (this.settingsRepo ? this.settingsRepo.isProxyMonitoringActive() : true);
+
+    if (!isManual && !shouldScanConfigs && !shouldScanProxies) {
+      logger.debug("Both Config and Proxy automated monitoring are paused. Skipping scheduled cycle.");
       return;
     }
 
@@ -57,94 +65,174 @@ export class ScanOrchestrator {
     const runId = this.configRepo.startScanRun();
 
     logger.info("==================================================");
-    logger.info(`Starting VPN scan & health check cycle (${isManualTrigger ? "Manual" : "Scheduled"})...`);
+    logger.info(
+      `Starting scan cycle (${isManual ? "Manual" : "Scheduled"}) | Configs: ${shouldScanConfigs ? "ON" : "OFF"}, Proxies: ${shouldScanProxies ? "ON" : "OFF"}...`
+    );
     logger.info("==================================================");
 
+    let totalChannelsScanned = 0;
+    let totalMessagesScanned = 0;
+    let totalItemsFound = 0;
+    let healthyCount = 0;
+    let postedConfigsCount = 0;
+    let postedProxiesCount = 0;
+
     try {
-      // 1. Scan joined channels
-      const { channelsScanned, messagesScanned, configsFound } = await this.scanner.scanAllChannels();
+      // 1. VPN Configs Phase
+      if (shouldScanConfigs) {
+        const { channelsScanned, messagesScanned, configsFound } = await this.scanner.scanAllChannels();
+        totalChannelsScanned += channelsScanned;
+        totalMessagesScanned += messagesScanned;
+        totalItemsFound += configsFound.length;
 
-      logger.info(
-        { channelsScanned, messagesScanned, totalExtracted: configsFound.length },
-        "Channel scanning finished"
-      );
+        logger.info(
+          { channelsScanned, messagesScanned, totalExtracted: configsFound.length },
+          "VPN Config channel scanning finished"
+        );
 
-      // 2. Filter & Deduplicate
-      const configsToTest: ParsedVpnConfig[] = [];
+        const configsToTest: ParsedVpnConfig[] = [];
+        for (const item of configsFound) {
+          const { parsed, sourceChannelId, sourceChannelTitle, sourceMessageId } = item;
 
-      for (const item of configsFound) {
-        const { parsed, sourceChannelId, sourceChannelTitle, sourceMessageId } = item;
+          this.configRepo.saveConfig({
+            hash: parsed.normalizedHash,
+            protocol: parsed.protocol,
+            server: parsed.server,
+            port: parsed.port,
+            rawConfig: parsed.raw,
+            remarks: parsed.remarks,
+            parsedDetails: {
+              security: parsed.security,
+              transport: parsed.transport,
+              path: parsed.path,
+              host: parsed.host,
+              sni: parsed.sni,
+              flow: parsed.flow,
+            },
+            sourceChannelId,
+            sourceChannelTitle,
+            sourceMessageId,
+          });
 
-        this.configRepo.saveConfig({
-          hash: parsed.normalizedHash,
-          protocol: parsed.protocol,
-          server: parsed.server,
-          port: parsed.port,
-          rawConfig: parsed.raw,
-          remarks: parsed.remarks,
-          parsedDetails: {
-            security: parsed.security,
-            transport: parsed.transport,
-            path: parsed.path,
-            host: parsed.host,
-            sni: parsed.sni,
-            flow: parsed.flow,
-          },
-          sourceChannelId,
-          sourceChannelTitle,
-          sourceMessageId,
-        });
-
-        // Only test if not already posted
-        if (!this.configRepo.isConfigPosted(parsed.normalizedHash)) {
-          // Avoid testing duplicate items within the same batch
-          if (!configsToTest.some((c) => c.normalizedHash === parsed.normalizedHash)) {
-            configsToTest.push(parsed);
+          if (!this.configRepo.isConfigPosted(parsed.normalizedHash)) {
+            if (!configsToTest.some((c) => c.normalizedHash === parsed.normalizedHash)) {
+              configsToTest.push(parsed);
+            }
           }
         }
-      }
 
-      logger.info({ toTest: configsToTest.length }, "Starting connectivity & latency testing...");
+        const checkPingConfig = this.settingsRepo
+          ? this.settingsRepo.isCheckPingBeforePostConfig()
+          : this.config.CHECK_PING_BEFORE_POST_CONFIG;
 
-      // 3. Test configs
-      let healthyCount = 0;
-      if (configsToTest.length > 0) {
-        const testResults = await this.testerPool.testBatch(configsToTest);
+        if (checkPingConfig) {
+          if (configsToTest.length > 0) {
+            logger.info({ toTest: configsToTest.length }, "Starting VPN configs connectivity & latency testing...");
+            const testResults = await this.testerPool.testBatch(configsToTest);
+            for (const [hash, res] of testResults.entries()) {
+              this.configRepo.updateTestResult(hash, res.isHealthy, res.latencyMs, res.errorMessage);
+              if (res.isHealthy) healthyCount++;
+            }
+          }
+        } else {
+          logger.info({ count: configsToTest.length }, "Ping testing before post is disabled for configs. Marking ready directly.");
+          for (const c of configsToTest) {
+            this.configRepo.updateTestResult(c.normalizedHash, true, null, null);
+            healthyCount++;
+          }
+        }
 
-        for (const [hash, res] of testResults.entries()) {
-          this.configRepo.updateTestResult(hash, res.isHealthy, res.latencyMs, res.errorMessage);
-          if (res.isHealthy) healthyCount++;
+        const maxLimit = this.settingsRepo
+          ? this.settingsRepo.getMaxPostsPerCycle()
+          : this.config.MAX_POSTS_PER_CYCLE;
+
+        const unpostedAll = this.configRepo.getUnpostedConfigs(100, checkPingConfig);
+        const unpostedConfigs = unpostedAll
+          .filter((c) => c.protocol !== "mtproto" && c.protocol !== "socks5")
+          .slice(0, maxLimit);
+
+        if (unpostedConfigs.length > 0) {
+          logger.info({ unpostedCount: unpostedConfigs.length, maxLimit }, "Publishing unposted VPN configs...");
+          postedConfigsCount = await this.publisher.publishBatch(unpostedConfigs);
         }
       }
 
-      logger.info(
-        { totalTested: configsToTest.length, healthyCount, deadCount: configsToTest.length - healthyCount },
-        "Testing completed!"
-      );
+      // 2. MTProto / Socks Proxies Phase
+      if (shouldScanProxies) {
+        const { channelsScanned: proxyChannelsScanned, proxiesFound } = await this.scanner.scanProxyChannels();
+        totalChannelsScanned += proxyChannelsScanned;
+        totalItemsFound += proxiesFound.length;
 
-      // 4. Publish healthy configs
-      const maxLimit = this.settingsRepo
-        ? this.settingsRepo.getMaxPostsPerCycle()
-        : this.config.MAX_POSTS_PER_CYCLE;
+        const proxiesToTest: ParsedVpnConfig[] = [];
+        for (const item of proxiesFound) {
+          const { parsed, sourceChannelId, sourceChannelTitle, sourceMessageId } = item;
 
-      const unpostedHealthy = this.configRepo.getUnpostedHealthyConfigs(maxLimit);
-      logger.info({ unpostedCount: unpostedHealthy.length, maxLimit }, "Publishing unposted healthy configs...");
+          this.configRepo.saveConfig({
+            hash: parsed.normalizedHash,
+            protocol: parsed.protocol,
+            server: parsed.server,
+            port: parsed.port,
+            rawConfig: parsed.raw,
+            remarks: parsed.remarks,
+            parsedDetails: parsed.extra,
+            sourceChannelId,
+            sourceChannelTitle,
+            sourceMessageId,
+          });
 
-      const postedCount = await this.publisher.publishBatch(unpostedHealthy);
+          if (!this.configRepo.isConfigPosted(parsed.normalizedHash)) {
+            if (!proxiesToTest.some((p) => p.normalizedHash === parsed.normalizedHash)) {
+              proxiesToTest.push(parsed);
+            }
+          }
+        }
 
-      // 5. Finish run record
+        const checkPingProxy = this.settingsRepo
+          ? this.settingsRepo.isCheckPingBeforePostProxy()
+          : this.config.CHECK_PING_BEFORE_POST_PROXY;
+
+        if (checkPingProxy) {
+          if (proxiesToTest.length > 0) {
+            logger.info({ toTestProxies: proxiesToTest.length }, "Testing MTProto / Socks proxy connectivity...");
+            const proxyResults = await this.testerPool.testBatch(proxiesToTest);
+            for (const [hash, res] of proxyResults.entries()) {
+              this.configRepo.updateTestResult(hash, res.isHealthy, res.latencyMs, res.errorMessage);
+              if (res.isHealthy) healthyCount++;
+            }
+          }
+        } else {
+          logger.info({ count: proxiesToTest.length }, "Ping testing before post is disabled for proxies. Marking ready directly.");
+          for (const p of proxiesToTest) {
+            this.configRepo.updateTestResult(p.normalizedHash, true, null, null);
+            healthyCount++;
+          }
+        }
+
+        const unpostedProxies = this.configRepo
+          .getUnpostedConfigs(100, checkPingProxy)
+          .filter((c) => c.protocol === "mtproto" || c.protocol === "socks5");
+
+        if (unpostedProxies.length > 0) {
+          logger.info({ unpostedProxies: unpostedProxies.length }, "Publishing bundled proxies...");
+          postedProxiesCount = await this.publisher.publishProxiesBatch(unpostedProxies);
+        }
+      }
+
+      const totalPosted = postedConfigsCount + postedProxiesCount;
+
+      // 3. Finish run record
       this.configRepo.finishScanRun(runId, {
-        channelsScanned,
-        messagesScanned,
-        configsFound: configsFound.length,
+        channelsScanned: totalChannelsScanned,
+        messagesScanned: totalMessagesScanned,
+        configsFound: totalItemsFound,
         configsHealthy: healthyCount,
-        configsPosted: postedCount,
+        configsPosted: totalPosted,
       });
 
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
       logger.info("==================================================");
       logger.info(
-        { elapsedSec, postedCount, healthyCount, channelsScanned },
+        { elapsedSec, postedConfigs: postedConfigsCount, postedProxies: postedProxiesCount, healthyCount },
         "Scan cycle completed successfully!"
       );
       logger.info("==================================================");
@@ -199,22 +287,66 @@ export class ScanOrchestrator {
     if (this.settingsRepo) {
       this.settingsRepo.setMonitoringActive(false);
     }
-    logger.info("Monitoring paused by user");
+    logger.info("All monitoring paused by user");
   }
 
   resumeMonitoring(): void {
     if (this.settingsRepo) {
       this.settingsRepo.setMonitoringActive(true);
     }
-    logger.info("Monitoring resumed by user");
+    logger.info("All monitoring resumed by user");
+  }
+
+  pauseConfigMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setConfigMonitoringActive(false);
+    }
+    logger.info("VPN Config monitoring paused by user");
+  }
+
+  resumeConfigMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setConfigMonitoringActive(true);
+    }
+    logger.info("VPN Config monitoring resumed by user");
+  }
+
+  pauseProxyMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setProxyMonitoringActive(false);
+    }
+    logger.info("Proxy monitoring paused by user");
+  }
+
+  resumeProxyMonitoring(): void {
+    if (this.settingsRepo) {
+      this.settingsRepo.setProxyMonitoringActive(true);
+    }
+    logger.info("Proxy monitoring resumed by user");
   }
 
   isMonitoringActive(): boolean {
     return this.settingsRepo ? this.settingsRepo.isMonitoringActive() : true;
   }
 
+  isConfigMonitoringActive(): boolean {
+    return this.settingsRepo ? this.settingsRepo.isConfigMonitoringActive() : true;
+  }
+
+  isProxyMonitoringActive(): boolean {
+    return this.settingsRepo ? this.settingsRepo.isProxyMonitoringActive() : true;
+  }
+
   async triggerManualScan(): Promise<void> {
-    await this.runCycle(true);
+    await this.runCycle({ configs: true, proxies: true, isManual: true });
+  }
+
+  async triggerManualConfigScan(): Promise<void> {
+    await this.runCycle({ configs: true, proxies: false, isManual: true });
+  }
+
+  async triggerManualProxyScan(): Promise<void> {
+    await this.runCycle({ configs: false, proxies: true, isManual: true });
   }
 
   stop(): void {

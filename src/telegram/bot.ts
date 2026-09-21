@@ -8,10 +8,20 @@ import { ScanOrchestrator } from "../scheduler/orchestrator.js";
 type UserState =
   | "idle"
   | "waiting_for_add_channel"
+  | "waiting_for_add_proxy_channel"
   | "waiting_for_custom_interval"
   | "waiting_for_custom_text"
+  | "waiting_for_custom_proxy_text"
   | "waiting_for_custom_remarks"
   | "waiting_for_custom_max_posts";
+
+function escapeHtml(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 export class TelegramBotService {
   private config: Config;
@@ -98,16 +108,21 @@ export class TelegramBotService {
   // --- Persistent Bottom Reply Keyboard ---
 
   private getPersistentReplyKeyboard(): any {
-    const isActive = this.settingsRepo.isMonitoringActive();
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
     return {
       keyboard: [
         [
-          { text: "🚀 شروع اسکن فوری (Scan Now)" },
-          { text: isActive ? "⏹ توقف اسکن خودکار (Pause)" : "▶️ فعال‌سازی اسکن خودکار (Start)" },
+          { text: "🚀 اسکن کانفیگ" },
+          { text: "⚡ اسکن پروکسی" },
         ],
         [
-          { text: "⚙️ تنظیمات (Settings)" },
-          { text: "📊 وضعیت سرور (Status)" },
+          { text: isConfigActive ? "⏹ توقف کانفیگ" : "▶️ شروع کانفیگ" },
+          { text: isProxyActive ? "⏹ توقف پروکسی" : "▶️ شروع پروکسی" },
+        ],
+        [
+          { text: "⚙️ تنظیمات" },
+          { text: "📊 وضعیت سرور" },
         ],
       ],
       resize_keyboard: true,
@@ -149,30 +164,55 @@ export class TelegramBotService {
       this.userStates.set(fromId, "idle");
       await this.sendMessage(
         chatId,
-        `✅ تعداد ${addedCount} کانال به لیست اضافه شد!\n\n📋 **لیست کانال‌های فعلی:**\n${this.renderChannelList()}`
+        `✅ تعداد <b>${addedCount}</b> کانال به لیست کانال‌های کانفیگ اضافه شد!\n\n📋 <b>لیست کانال‌های فعلی:</b>\n${this.renderChannelList()}`
       );
       await this.sendChannelsMenu(chatId);
+      return;
+    }
+
+    if (state === "waiting_for_add_proxy_channel") {
+      const channels = rawText.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean);
+      let addedCount = 0;
+      for (const ch of channels) {
+        if (this.settingsRepo.addAllowedProxyChannel(ch)) {
+          addedCount++;
+        }
+      }
+      this.userStates.set(fromId, "idle");
+      await this.sendMessage(
+        chatId,
+        `✅ تعداد <b>${addedCount}</b> کانال به لیست کانال‌های پروکسی اضافه شد!\n\n🌐 <b>لیست کانال‌های پروکسی:</b>\n${this.renderProxyChannelList()}`
+      );
+      await this.sendProxyChannelsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_interval") {
       const num = parseInt(rawText, 10);
       if (isNaN(num) || num < 1) {
-        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر به دقیقه وارد کنید (مثلاً `20`):");
+        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر به دقیقه وارد کنید (مثلاً <code>20</code>):");
         return;
       }
       this.settingsRepo.setScanIntervalMinutes(num);
       this.orchestrator.rescheduleTimer(num);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `⏱️ زمان اسکن با موفقیت به **${num} دقیقه** تغییر یافت!`);
+      await this.sendMessage(chatId, `⏱️ زمان اسکن با موفقیت به <b>${num} دقیقه</b> تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
 
     if (state === "waiting_for_custom_text") {
-      this.settingsRepo.setCustomPostText(rawText);
+      this.settingsRepo.setCustomConfigPostText(rawText);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `✍️ متن سفارشی انتهای پست ذخیره شد:\n\n_${rawText}_`);
+      await this.sendMessage(chatId, `✍️ متن سفارشی پست‌های کانفیگ ذخیره شد:\n\n<i>${escapeHtml(rawText)}</i>`);
+      await this.sendSettingsMenu(chatId);
+      return;
+    }
+
+    if (state === "waiting_for_custom_proxy_text") {
+      this.settingsRepo.setCustomProxyPostText(rawText);
+      this.userStates.set(fromId, "idle");
+      await this.sendMessage(chatId, `📝 متن سفارشی پست‌های پروکسی ذخیره شد:\n\n<i>${escapeHtml(rawText)}</i>`);
       await this.sendSettingsMenu(chatId);
       return;
     }
@@ -180,7 +220,7 @@ export class TelegramBotService {
     if (state === "waiting_for_custom_remarks") {
       this.settingsRepo.setCustomRemarks(rawText);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `🏷️ نام رمارک کانال به \`${rawText}\` تغییر یافت!`);
+      await this.sendMessage(chatId, `🏷️ نام رمارک کانال به <code>${escapeHtml(rawText)}</code> تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
@@ -188,12 +228,12 @@ export class TelegramBotService {
     if (state === "waiting_for_custom_max_posts") {
       const num = parseInt(rawText, 10);
       if (isNaN(num) || num < 1) {
-        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر وارد کنید (مثلاً `8`):");
+        await this.sendMessage(chatId, "⚠️ لطفاً یک عدد معتبر وارد کنید (مثلاً <code>8</code>):");
         return;
       }
       this.settingsRepo.setMaxPostsPerCycle(num);
       this.userStates.set(fromId, "idle");
-      await this.sendMessage(chatId, `🔢 حداکثر تعداد پست در هر اسکن به **${num}** تغییر یافت!`);
+      await this.sendMessage(chatId, `🔢 حداکثر تعداد پست در هر اسکن به <b>${num}</b> تغییر یافت!`);
       await this.sendSettingsMenu(chatId);
       return;
     }
@@ -202,16 +242,46 @@ export class TelegramBotService {
     if (text.includes("تنظیمات") || text.includes("settings") || text === "/settings") {
       this.userStates.set(fromId, "idle");
       await this.sendSettingsMenu(chatId);
-    } else if (text.includes("شروع اسکن فوری") || text.includes("scan now") || text === "/scan") {
-      await this.triggerScan(chatId);
-    } else if (text.includes("توقف اسکن") || text.includes("فعال‌سازی اسکن") || text.includes("toggle") || text === "/toggle") {
+    } else if (text.includes("اسکن کانفیگ") || text === "/scan_config") {
+      await this.triggerConfigScan(chatId);
+    } else if (text.includes("اسکن پروکسی") || text === "/scan_proxy") {
+      await this.triggerProxyScan(chatId);
+    } else if (text.includes("شروع اسکن") || text.includes("اسکن فوری") || text === "/scan") {
+      await this.triggerFullScan(chatId);
+    } else if (
+      (text.includes("کانفیگ") && (text.includes("توقف") || text.includes("شروع") || text.includes("فعال"))) ||
+      text === "/toggle_config"
+    ) {
+      const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+      if (isConfigActive) {
+        this.orchestrator.pauseConfigMonitoring();
+        await this.sendMessage(chatId, "🔴 اسکن خودکار کانفیگ‌ها متوقف شد.", undefined, this.getPersistentReplyKeyboard());
+      } else {
+        this.orchestrator.resumeConfigMonitoring();
+        await this.sendMessage(chatId, "🟢 اسکن خودکار کانفیگ‌ها فعال شد.", undefined, this.getPersistentReplyKeyboard());
+      }
+      await this.sendMainMenu(chatId);
+    } else if (
+      (text.includes("پروکسی") && (text.includes("توقف") || text.includes("شروع") || text.includes("فعال"))) ||
+      text === "/toggle_proxy"
+    ) {
+      const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
+      if (isProxyActive) {
+        this.orchestrator.pauseProxyMonitoring();
+        await this.sendMessage(chatId, "🔴 اسکن خودکار پروکسی‌ها متوقف شد.", undefined, this.getPersistentReplyKeyboard());
+      } else {
+        this.orchestrator.resumeProxyMonitoring();
+        await this.sendMessage(chatId, "🟢 اسکن خودکار پروکسی‌ها فعال شد.", undefined, this.getPersistentReplyKeyboard());
+      }
+      await this.sendMainMenu(chatId);
+    } else if (text.includes("توقف") || text.includes("فعال") || text.includes("toggle") || text === "/toggle") {
       const isActive = this.settingsRepo.isMonitoringActive();
       if (isActive) {
         this.orchestrator.pauseMonitoring();
-        await this.sendMessage(chatId, "🔴 اسکن خودکار متوقف شد. (Monitoring Paused)", undefined, this.getPersistentReplyKeyboard());
+        await this.sendMessage(chatId, "🔴 تمام اسکن‌های خودکار متوقف شدند.", undefined, this.getPersistentReplyKeyboard());
       } else {
         this.orchestrator.resumeMonitoring();
-        await this.sendMessage(chatId, "🟢 اسکن خودکار فعال شد. (Monitoring Resumed)", undefined, this.getPersistentReplyKeyboard());
+        await this.sendMessage(chatId, "🟢 تمام اسکن‌های خودکار فعال شدند.", undefined, this.getPersistentReplyKeyboard());
       }
       await this.sendMainMenu(chatId);
     } else if (text.includes("وضعیت") || text.includes("status") || text === "/status") {
@@ -245,29 +315,51 @@ export class TelegramBotService {
     } else if (data === "menu_settings") {
       this.userStates.set(fromId, "idle");
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
-    } else if (data === "toggle_monitoring") {
-      const isCurrentlyActive = this.settingsRepo.isMonitoringActive();
-      if (isCurrentlyActive) {
-        this.orchestrator.pauseMonitoring();
+    } else if (data === "toggle_config_monitoring") {
+      const current = this.settingsRepo.isConfigMonitoringActive();
+      if (current) {
+        this.orchestrator.pauseConfigMonitoring();
       } else {
-        this.orchestrator.resumeMonitoring();
+        this.orchestrator.resumeConfigMonitoring();
       }
       await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuInlineKeyboard());
-      // Refresh bottom persistent keyboard
-      await this.sendMessage(chatId, isCurrentlyActive ? "🔴 وضعیت اسکن: متوقف شد" : "🟢 وضعیت اسکن: فعال شد", undefined, this.getPersistentReplyKeyboard());
+      await this.sendMessage(
+        chatId,
+        current ? "🔴 اسکن خودکار کانفیگ: متوقف شد" : "🟢 اسکن خودکار کانفیگ: فعال شد",
+        undefined,
+        this.getPersistentReplyKeyboard()
+      );
+    } else if (data === "toggle_proxy_monitoring") {
+      const current = this.settingsRepo.isProxyMonitoringActive();
+      if (current) {
+        this.orchestrator.pauseProxyMonitoring();
+      } else {
+        this.orchestrator.resumeProxyMonitoring();
+      }
+      await this.editMessage(chatId, messageId, this.getMainMenuText(), this.getMainMenuInlineKeyboard());
+      await this.sendMessage(
+        chatId,
+        current ? "🔴 اسکن خودکار پروکسی: متوقف شد" : "🟢 اسکن خودکار پروکسی: فعال شد",
+        undefined,
+        this.getPersistentReplyKeyboard()
+      );
+    } else if (data === "trigger_scan_config") {
+      await this.triggerConfigScan(chatId);
+    } else if (data === "trigger_scan_proxy") {
+      await this.triggerProxyScan(chatId);
     } else if (data === "trigger_scan") {
-      await this.sendMessage(chatId, "🔍 در حال اسکن کانال‌ها و تست اتصال کانفیگ‌ها...");
-      this.orchestrator
-        .triggerManualScan()
-        .then(() => {
-          this.sendMessage(chatId, "✅ اسکن و ارسال کانفیگ‌های سالم با موفقیت انجام شد!");
-        })
-        .catch((err) => {
-          this.sendMessage(chatId, `❌ خطا در اجرای اسکن: ${err.message}`);
-        });
+      await this.triggerFullScan(chatId);
     } else if (data === "toggle_ping") {
       const current = this.settingsRepo.isIncludePingInPost();
       this.settingsRepo.setIncludePingInPost(!current);
+      await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
+    } else if (data === "toggle_check_ping_config") {
+      const current = this.settingsRepo.isCheckPingBeforePostConfig();
+      this.settingsRepo.setCheckPingBeforePostConfig(!current);
+      await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
+    } else if (data === "toggle_check_ping_proxy") {
+      const current = this.settingsRepo.isCheckPingBeforePostProxy();
+      this.settingsRepo.setCheckPingBeforePostProxy(!current);
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
     } else if (data === "menu_channels") {
       await this.editMessage(chatId, messageId, this.getChannelsMenuText(), this.getChannelsMenuKeyboard());
@@ -275,15 +367,15 @@ export class TelegramBotService {
       this.userStates.set(fromId, "waiting_for_add_channel");
       await this.sendMessage(
         chatId,
-        "➕ **افزودن کانال جدید برای اسکن**\n\n" +
-          "آیدی یا یوزرنیم کانال مورد نظر را ارسال کنید (مثلاً `@proxy_channel` یا چندین کانال با کاما):\n\n" +
-          "_(برای لغو عبارت /cancel را ارسال کنید)_"
+        "➕ <b>افزودن کانال جدید برای اسکن کانفیگ</b>\n\n" +
+          "آیدی یا یوزرنیم کانال مورد نظر را ارسال کنید (مثلاً <code>@config_channel</code> یا چندین کانال با کاما):\n\n" +
+          "<i>(برای لغو عبارت /cancel را ارسال کنید)</i>"
       );
     } else if (data === "menu_remove_channel") {
       await this.editMessage(
         chatId,
         messageId,
-        "➖ **روی کانال مورد نظر کلیک کنید تا حذف شود:**",
+        "➖ <b>روی کانال مورد نظر کلیک کنید تا حذف شود:</b>",
         this.getRemoveChannelsKeyboard()
       );
     } else if (data.startsWith("del_chan:")) {
@@ -292,14 +384,40 @@ export class TelegramBotService {
       await this.editMessage(
         chatId,
         messageId,
-        `✅ کانال \`${targetChan}\` با موفقیت حذف شد!\n\n` + this.getChannelsMenuText(),
+        `✅ کانال کانفیگ <code>${escapeHtml(targetChan)}</code> با موفقیت حذف شد!\n\n` + this.getChannelsMenuText(),
         this.getChannelsMenuKeyboard()
+      );
+    } else if (data === "menu_proxy_channels") {
+      await this.editMessage(chatId, messageId, this.getProxyChannelsMenuText(), this.getProxyChannelsMenuKeyboard());
+    } else if (data === "add_proxy_channel") {
+      this.userStates.set(fromId, "waiting_for_add_proxy_channel");
+      await this.sendMessage(
+        chatId,
+        "➕ <b>افزودن کانال جدید برای اسکن پروکسی تلگرام</b>\n\n" +
+          "آیدی یا یوزرنیم کانال مورد نظر را ارسال کنید (مثلاً <code>@mtproxy_channel</code> یا چندین کانال با کاما):\n\n" +
+          "<i>(برای لغو عبارت /cancel را ارسال کنید)</i>"
+      );
+    } else if (data === "menu_remove_proxy_channel") {
+      await this.editMessage(
+        chatId,
+        messageId,
+        "➖ <b>روی کانال پروکسی مورد نظر کلیک کنید تا حذف شود:</b>",
+        this.getRemoveProxyChannelsKeyboard()
+      );
+    } else if (data.startsWith("del_pchan:")) {
+      const targetChan = data.replace("del_pchan:", "");
+      this.settingsRepo.removeAllowedProxyChannel(targetChan);
+      await this.editMessage(
+        chatId,
+        messageId,
+        `✅ کانال پروکسی <code>${escapeHtml(targetChan)}</code> با موفقیت حذف شد!\n\n` + this.getProxyChannelsMenuText(),
+        this.getProxyChannelsMenuKeyboard()
       );
     } else if (data === "menu_interval") {
       await this.editMessage(
         chatId,
         messageId,
-        `⏱️ **تغییر زمان‌بندی اسکن و ارسال**\n\nزمان فعلی: **هر ${this.settingsRepo.getScanIntervalMinutes()} دقیقه**\n\nیک زمان را انتخاب کنید یا مقدار دلخواه بزنید:`,
+        `⏱️ <b>تغییر زمان‌بندی اسکن و ارسال</b>\n\nزمان فعلی: <b>هر ${this.settingsRepo.getScanIntervalMinutes()} دقیقه</b>\n\nیک زمان را انتخاب کنید یا مقدار دلخواه بزنید:`,
         this.getIntervalKeyboard()
       );
     } else if (data.startsWith("set_int:")) {
@@ -311,33 +429,54 @@ export class TelegramBotService {
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
     } else if (data === "custom_interval") {
       this.userStates.set(fromId, "waiting_for_custom_interval");
-      await this.sendMessage(chatId, "⏱️ زمان اسکن را به دقیقه ارسال کنید (مثلاً `20` یا `45`):\n\n_(برای لغو /cancel بزنید)_");
+      await this.sendMessage(chatId, "⏱️ زمان اسکن را به دقیقه ارسال کنید (مثلاً <code>20</code> یا <code>45</code>):\n\n<i>(برای لغو /cancel بزنید)</i>");
     } else if (data === "menu_footer_text") {
-      const current = this.settingsRepo.getCustomPostText();
+      const current = this.settingsRepo.getCustomConfigPostText();
       const textMsg =
-        `✍️ **متن دلخواه انتهای پست‌ها**\n\n` +
-        (current ? `متن فعلی:\n_${current}_\n\n` : `_هیچ متن سفارشی تنظیم نشده است._\n\n`) +
-        `این متن با یک خط فاصله قبل از آیدی کانال (\`${this.settingsRepo.getCustomRemarks()}\`) قرار می‌گیرد.`;
+        `✍️ <b>متن دلخواه انتهای پست‌های کانفیگ</b>\n\n` +
+        (current ? `متن فعلی:\n<i>${escapeHtml(current)}</i>\n\n` : `<i>هیچ متن سفارشی برای کانفیگ تنظیم نشده است.</i>\n\n`) +
+        `این متن با یک خط فاصله قبل از آیدی کانال (<code>${escapeHtml(this.settingsRepo.getCustomRemarks())}</code>) قرار می‌گیرد.`;
       await this.editMessage(chatId, messageId, textMsg, this.getFooterTextKeyboard());
     } else if (data === "set_footer_text") {
       this.userStates.set(fromId, "waiting_for_custom_text");
       await this.sendMessage(
         chatId,
-        "✍️ متنی که می‌خواهید در انتهای پست‌ها (قبل از آیدی کانال) قرار بگیرد را ارسال کنید:\n\n_(برای لغو /cancel بزنید)_"
+        "✍️ متنی که می‌خواهید در انتهای پست‌های کانفیگ قرار بگیرد را ارسال کنید:\n\n<i>(برای لغو /cancel بزنید)</i>"
       );
     } else if (data === "clear_footer_text") {
-      this.settingsRepo.setCustomPostText("");
+      this.settingsRepo.setCustomConfigPostText("");
       await this.editMessage(
         chatId,
         messageId,
-        "🗑️ متن سفارشی حذف شد!\n\n" + this.getSettingsMenuText(),
+        "🗑️ متن سفارشی کانفیگ حذف شد!\n\n" + this.getSettingsMenuText(),
+        this.getSettingsMenuKeyboard()
+      );
+    } else if (data === "menu_proxy_footer_text") {
+      const current = this.settingsRepo.getCustomProxyPostText();
+      const textMsg =
+        `📝 <b>متن دلخواه پست‌های پروکسی</b>\n\n` +
+        (current ? `متن فعلی:\n<i>${escapeHtml(current)}</i>\n\n` : `<i>هیچ متن سفارشی برای پروکسی تنظیم نشده است.</i>\n\n`) +
+        `این متن در بالای لینک‌های پروکسی و قبل از آیدی کانال قرار می‌گیرد.`;
+      await this.editMessage(chatId, messageId, textMsg, this.getProxyFooterTextKeyboard());
+    } else if (data === "set_proxy_footer_text") {
+      this.userStates.set(fromId, "waiting_for_custom_proxy_text");
+      await this.sendMessage(
+        chatId,
+        "✍️ متنی که می‌خواهید در پست‌های پروکسی تلگرام قرار بگیرد را ارسال کنید:\n\n<i>(برای لغو /cancel بزنید)</i>"
+      );
+    } else if (data === "clear_proxy_footer_text") {
+      this.settingsRepo.setCustomProxyPostText("");
+      await this.editMessage(
+        chatId,
+        messageId,
+        "🗑️ متن سفارشی پروکسی حذف شد!\n\n" + this.getSettingsMenuText(),
         this.getSettingsMenuKeyboard()
       );
     } else if (data === "menu_max_posts") {
       await this.editMessage(
         chatId,
         messageId,
-        `🔢 **حداکثر تعداد پست در هر اسکن**\n\nتعداد فعلی: **${this.settingsRepo.getMaxPostsPerCycle()} پست**\n\nتعداد کانفیگ سالم برای ارسال در هر دور را انتخاب کنید:`,
+        `🔢 <b>حداکثر تعداد پست در هر اسکن</b>\n\nتعداد فعلی: <b>${this.settingsRepo.getMaxPostsPerCycle()} پست</b>\n\nتعداد کانفیگ سالم برای ارسال در هر دور را انتخاب کنید:`,
         this.getMaxPostsKeyboard()
       );
     } else if (data.startsWith("set_max:")) {
@@ -348,12 +487,12 @@ export class TelegramBotService {
       await this.editMessage(chatId, messageId, this.getSettingsMenuText(), this.getSettingsMenuKeyboard());
     } else if (data === "custom_max_posts") {
       this.userStates.set(fromId, "waiting_for_custom_max_posts");
-      await this.sendMessage(chatId, "🔢 حداکثر تعداد پست برای ارسال در هر اسکن را ارسال کنید (مثلاً `8`):\n\n_(برای لغو /cancel بزنید)_");
+      await this.sendMessage(chatId, "🔢 حداکثر تعداد پست برای ارسال در هر اسکن را ارسال کنید (مثلاً <code>8</code>):\n\n<i>(برای لغو /cancel بزنید)</i>");
     } else if (data === "menu_remarks") {
       this.userStates.set(fromId, "waiting_for_custom_remarks");
       await this.sendMessage(
         chatId,
-        `🏷️ **تغییر نام رمارک کانفیگ‌ها**\n\nنام فعلی: \`${this.settingsRepo.getCustomRemarks()}\`\n\nنام رمارک جدید را ارسال کنید (مثلاً \`@connexy_private\`):\n\n_(برای لغو /cancel بزنید)_`
+        `🏷️ <b>تغییر نام رمارک کانفیگ‌ها</b>\n\nنام فعلی: <code>${escapeHtml(this.settingsRepo.getCustomRemarks())}</code>\n\nنام رمارک جدید را ارسال کنید (مثلاً <code>@connexy_private</code>):\n\n<i>(برای لغو /cancel بزنید)</i>`
       );
     } else if (data === "menu_status") {
       await this.sendStatus(chatId);
@@ -363,80 +502,148 @@ export class TelegramBotService {
   // --- Views and Keyboards ---
 
   private getMainMenuText(): string {
-    const isActive = this.settingsRepo.isMonitoringActive();
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
+    const checkPingConfig = this.settingsRepo.isCheckPingBeforePostConfig();
+    const checkPingProxy = this.settingsRepo.isCheckPingBeforePostProxy();
     const interval = this.settingsRepo.getScanIntervalMinutes();
     const channels = this.settingsRepo.getAllowedChannels();
-    const pingStatus = this.settingsRepo.isIncludePingInPost() ? "🟢 روشن (ON)" : "🔴 خاموش (OFF)";
-    const customText = this.settingsRepo.getCustomPostText() ? "✅ تنظیم شده" : "ندارد";
+    const proxyChannels = this.settingsRepo.getAllowedProxyChannels();
+    const pingStatus = this.settingsRepo.isIncludePingInPost() ? "🟢 روشن" : "🔴 خاموش";
+    const customConfigText = this.settingsRepo.getCustomConfigPostText() ? "✅ تنظیم شده" : "ندارد";
+    const customProxyText = this.settingsRepo.getCustomProxyPostText() ? "✅ تنظیم شده" : "ندارد";
 
     return (
-      `🤖 **کنترل پنل ربات مانیتورینگ VPN**\n\n` +
-      `⚡ **وضعیت ربات:** ${isActive ? "🟢 `فعال و در حال اجرا`" : "🔴 `متوقف شده`"}\n` +
-      `⏱️ **فاصله زمانی اسکن:** هر **${interval} دقیقه**\n` +
-      `📢 **کانال‌های تحت بررسی:** **${channels.length > 0 ? `${channels.length} کانال` : "تمام کانال‌های عضو شده"}**\n` +
-      `🎯 **کانال مقصد:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
-      `📡 **نمایش پینگ در پست:** ${pingStatus}\n` +
-      `✍️ **متن دلخواه قبل آیدی:** ${customText}\n` +
-      `🏷️ **رمارک کانفیگ‌ها:** \`${this.settingsRepo.getCustomRemarks()}\``
+      `🤖 <b>کنترل پنل ربات مانیتورینگ VPN و پروکسی</b>\n\n` +
+      `⚡ <b>اسکن خودکار کانفیگ:</b> ${isConfigActive ? "🟢 <code>فعال</code>" : "🔴 <code>متوقف</code>"}\n` +
+      `⚡ <b>اسکن خودکار پروکسی:</b> ${isProxyActive ? "🟢 <code>فعال</code>" : "🔴 <code>متوقف</code>"}\n` +
+      `🔍 <b>تست پینگ کانفیگ:</b> ${checkPingConfig ? "🟢 <code>فعال</code>" : "🔴 <code>غیرفعال</code>"}\n` +
+      `🔍 <b>تست پینگ پروکسی:</b> ${checkPingProxy ? "🟢 <code>فعال</code>" : "🔴 <code>غیرفعال</code>"}\n` +
+      `⏱️ <b>فاصله زمانی اسکن:</b> هر <b>${interval} دقیقه</b>\n` +
+      `📢 <b>کانال‌های کانفیگ:</b> <b>${channels.length > 0 ? `${channels.length} کانال` : "تمام کانال‌های عضو شده"}</b>\n` +
+      `🌐 <b>کانال‌های پروکسی:</b> <b>${proxyChannels.length > 0 ? `${proxyChannels.length} کانال` : "تنظیم نشده"}</b>\n` +
+      `🎯 <b>کانال مقصد:</b> <code>${escapeHtml(this.config.TARGET_CHANNEL_ID)}</code>\n` +
+      `📡 <b>نمایش پینگ در کانفیگ:</b> ${pingStatus}\n` +
+      `✍️ <b>متن دلخواه کانفیگ:</b> ${customConfigText}\n` +
+      `📝 <b>متن دلخواه پروکسی:</b> ${customProxyText}\n` +
+      `🏷️ <b>رمارک کانفیگ‌ها:</b> <code>${escapeHtml(this.settingsRepo.getCustomRemarks())}</code>`
     );
   }
 
   private getMainMenuInlineKeyboard(): any {
-    const isActive = this.settingsRepo.isMonitoringActive();
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
     return {
       inline_keyboard: [
         [
+          { text: "🚀 اسکن فوری کانفیگ", callback_data: "trigger_scan_config" },
+          { text: "⚡ اسکن فوری پروکسی", callback_data: "trigger_scan_proxy" },
+        ],
+        [
           {
-            text: isActive ? "⏹ توقف اسکن خودکار" : "▶️ فعال‌سازی اسکن خودکار",
-            callback_data: "toggle_monitoring",
+            text: isConfigActive ? "کانفیگ: 🟢 فعال (توقف)" : "کانفیگ: 🔴 متوقف (شروع)",
+            callback_data: "toggle_config_monitoring",
+          },
+          {
+            text: isProxyActive ? "پروکسی: 🟢 فعال (توقف)" : "پروکسی: 🔴 متوقف (شروع)",
+            callback_data: "toggle_proxy_monitoring",
           },
         ],
         [
-          { text: "🚀 اسکن فوری اکنون", callback_data: "trigger_scan" },
           { text: "📊 وضعیت سرور", callback_data: "menu_status" },
+          { text: "⚙️ ورود به تنظیمات", callback_data: "menu_settings" },
         ],
-        [{ text: "⚙️ ورود به تنظیمات", callback_data: "menu_settings" }],
       ],
     };
   }
 
   private getSettingsMenuText(): string {
     const ping = this.settingsRepo.isIncludePingInPost() ? "🟢 روشن (ON)" : "🔴 خاموش (OFF)";
+    const checkPingConfig = this.settingsRepo.isCheckPingBeforePostConfig()
+      ? "🟢 فعال (تست قبل ارسال)"
+      : "🔴 غیرفعال (ارسال بدون تست)";
+    const checkPingProxy = this.settingsRepo.isCheckPingBeforePostProxy()
+      ? "🟢 فعال (تست قبل ارسال)"
+      : "🔴 غیرفعال (ارسال بدون تست)";
     const interval = this.settingsRepo.getScanIntervalMinutes();
     const channels = this.settingsRepo.getAllowedChannels();
+    const proxyChannels = this.settingsRepo.getAllowedProxyChannels();
     const maxPosts = this.settingsRepo.getMaxPostsPerCycle();
     const remarks = this.settingsRepo.getCustomRemarks();
-    const customText = this.settingsRepo.getCustomPostText();
+    const customConfigText = this.settingsRepo.getCustomConfigPostText();
+    const customProxyText = this.settingsRepo.getCustomProxyPostText();
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
 
     return (
-      `⚙️ **تنظیمات ربات مانیتورینگ**\n\n` +
-      `⚡ **نمایش پینگ در پست:** ${ping}\n` +
-      `⏱️ **زمان اسکن:** هر ${interval} دقیقه\n` +
-      `📢 **کانال‌ها (${channels.length}):** ${channels.join(", ") || "همه کانال‌ها"}\n` +
-      `🔢 **حداکثر پست در هر اسکن:** ${maxPosts}\n` +
-      `🏷️ **نام رمارک کانفیگ:** \`${remarks}\`\n` +
-      `✍️ **متن دلخواه انتهای پست:** ${customText ? `"${customText}"` : "_تنظیم نشده_"}\n\n` +
+      `⚙️ <b>تنظیمات ربات مانیتورینگ</b>\n\n` +
+      `⚡ <b>اسکن خودکار کانفیگ:</b> ${isConfigActive ? "🟢 فعال" : "🔴 متوقف"}\n` +
+      `⚡ <b>اسکن خودکار پروکسی:</b> ${isProxyActive ? "🟢 فعال" : "🔴 متوقف"}\n` +
+      `🔍 <b>تست پینگ کانفیگ قبل ارسال:</b> ${checkPingConfig}\n` +
+      `🔍 <b>تست پینگ پروکسی قبل ارسال:</b> ${checkPingProxy}\n` +
+      `⚡ <b>نمایش پینگ در کانفیگ:</b> ${ping}\n` +
+      `⏱️ <b>زمان اسکن:</b> هر ${interval} دقیقه\n` +
+      `📢 <b>کانال‌های کانفیگ (${channels.length}):</b> ${escapeHtml(channels.join(", ") || "همه کانال‌ها")}\n` +
+      `🌐 <b>کانال‌های پروکسی (${proxyChannels.length}):</b> ${escapeHtml(proxyChannels.join(", ") || "تنظیم نشده")}\n` +
+      `🔢 <b>حداکثر پست کانفیگ در هر اسکن:</b> ${maxPosts}\n` +
+      `🏷️ <b>نام رمارک کانفیگ:</b> <code>${escapeHtml(remarks)}</code>\n` +
+      `✍️ <b>متن دلخواه پست کانفیگ:</b> ${customConfigText ? `\n<i>${escapeHtml(customConfigText)}</i>` : "<i>تنظیم نشده</i>"}\n` +
+      `📝 <b>متن دلخواه پست پروکسی:</b> ${customProxyText ? `\n<i>${escapeHtml(customProxyText)}</i>` : "<i>تنظیم نشده</i>"}\n\n` +
       `گزینه مورد نظر برای تغییر را انتخاب کنید:`
     );
   }
 
   private getSettingsMenuKeyboard(): any {
     const pingActive = this.settingsRepo.isIncludePingInPost();
+    const checkPingConfig = this.settingsRepo.isCheckPingBeforePostConfig();
+    const checkPingProxy = this.settingsRepo.isCheckPingBeforePostProxy();
     const interval = this.settingsRepo.getScanIntervalMinutes();
     const maxPosts = this.settingsRepo.getMaxPostsPerCycle();
+    const channelsCount = this.settingsRepo.getAllowedChannels().length;
+    const proxyChannelsCount = this.settingsRepo.getAllowedProxyChannels().length;
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
 
     return {
       inline_keyboard: [
         [
           {
-            text: `⚡ نمایش پینگ در پست: ${pingActive ? "🟢 روشن" : "🔴 خاموش"}`,
+            text: `اسکن خودکار کانفیگ: ${isConfigActive ? "🟢 روشن" : "🔴 خاموش"}`,
+            callback_data: "toggle_config_monitoring",
+          },
+          {
+            text: `اسکن خودکار پروکسی: ${isProxyActive ? "🟢 روشن" : "🔴 خاموش"}`,
+            callback_data: "toggle_proxy_monitoring",
+          },
+        ],
+        [
+          {
+            text: `تست پینگ کانفیگ: ${checkPingConfig ? "🟢 فعال" : "🔴 غیرفعال"}`,
+            callback_data: "toggle_check_ping_config",
+          },
+          {
+            text: `تست پینگ پروکسی: ${checkPingProxy ? "🟢 فعال" : "🔴 غیرفعال"}`,
+            callback_data: "toggle_check_ping_proxy",
+          },
+        ],
+        [
+          {
+            text: `⚡ نمایش پینگ در کانفیگ: ${pingActive ? "🟢 روشن" : "🔴 خاموش"}`,
             callback_data: "toggle_ping",
           },
         ],
-        [{ text: "📢 مدیریت کانال‌های اسکن", callback_data: "menu_channels" }],
-        [{ text: `⏱️ زمان اسکن (${interval} دقیقه)`, callback_data: "menu_interval" }],
-        [{ text: "✍️ متن دلخواه انتهای پست", callback_data: "menu_footer_text" }],
-        [{ text: `🔢 حداکثر تعداد پست (${maxPosts} عدد)`, callback_data: "menu_max_posts" }],
+        [
+          { text: `📢 کانال‌های کانفیگ (${channelsCount})`, callback_data: "menu_channels" },
+          { text: `🌐 کانال‌های پروکسی (${proxyChannelsCount})`, callback_data: "menu_proxy_channels" },
+        ],
+        [
+          { text: "✍️ متن پست کانفیگ", callback_data: "menu_footer_text" },
+          { text: "📝 متن پست پروکسی", callback_data: "menu_proxy_footer_text" },
+        ],
+        [
+          { text: `⏱️ زمان اسکن (${interval} دقیقه)`, callback_data: "menu_interval" },
+          { text: `🔢 سقف پست کانفیگ (${maxPosts})`, callback_data: "menu_max_posts" },
+        ],
         [{ text: "🏷️ ویرایش رمارک کانفیگ", callback_data: "menu_remarks" }],
         [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "menu_main" }],
       ],
@@ -446,10 +653,10 @@ export class TelegramBotService {
   private getChannelsMenuText(): string {
     const channels = this.settingsRepo.getAllowedChannels();
     return (
-      `📢 **کانال‌های تحت بررسی برای استخراج کانفیگ**\n\n` +
+      `📢 <b>کانال‌های تحت بررسی برای استخراج کانفیگ VPN</b>\n\n` +
       (channels.length > 0
-        ? channels.map((c, i) => `${i + 1}. \`${c}\``).join("\n")
-        : `_هیچ کانال خاصی تنظیم نشده (تمام کانال‌های عضو شده اسکن می‌شوند)_`) +
+        ? channels.map((c, i) => `${i + 1}. <code>${escapeHtml(c)}</code>`).join("\n")
+        : `<i>هیچ کانال خاصی تنظیم نشده (تمام کانال‌های عضو شده اسکن می‌شوند)</i>`) +
       `\n\nبرای افزودن یا حذف کانال از دکمه‌های زیر استفاده کنید:`
     );
   }
@@ -457,11 +664,11 @@ export class TelegramBotService {
   private getChannelsMenuKeyboard(): any {
     const channels = this.settingsRepo.getAllowedChannels();
     const keyboard = [
-      [{ text: "➕ افزودن کانال جدید", callback_data: "add_channel" }],
+      [{ text: "➕ افزودن کانال کانفیگ", callback_data: "add_channel" }],
     ];
 
     if (channels.length > 0) {
-      keyboard.push([{ text: "➖ حذف کانال", callback_data: "menu_remove_channel" }]);
+      keyboard.push([{ text: "➖ حذف کانال کانفیگ", callback_data: "menu_remove_channel" }]);
     }
 
     keyboard.push([{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }]);
@@ -474,6 +681,40 @@ export class TelegramBotService {
       { text: `🗑️ حذف ${c}`, callback_data: `del_chan:${c}` },
     ]);
     rows.push([{ text: "🔙 انصراف", callback_data: "menu_channels" }]);
+    return { inline_keyboard: rows };
+  }
+
+  private getProxyChannelsMenuText(): string {
+    const channels = this.settingsRepo.getAllowedProxyChannels();
+    return (
+      `🌐 <b>کانال‌های تحت بررسی برای استخراج پروکسی تلگرام (MTProto / Socks)</b>\n\n` +
+      (channels.length > 0
+        ? channels.map((c, i) => `${i + 1}. <code>${escapeHtml(c)}</code>`).join("\n")
+        : `<i>هیچ کانال پروکسی تنظیم نشده است.</i>`) +
+      `\n\nبرای افزودن یا حذف کانال پروکسی از دکمه‌های زیر استفاده کنید:`
+    );
+  }
+
+  private getProxyChannelsMenuKeyboard(): any {
+    const channels = this.settingsRepo.getAllowedProxyChannels();
+    const keyboard = [
+      [{ text: "➕ افزودن کانال پروکسی", callback_data: "add_proxy_channel" }],
+    ];
+
+    if (channels.length > 0) {
+      keyboard.push([{ text: "➖ حذف کانال پروکسی", callback_data: "menu_remove_proxy_channel" }]);
+    }
+
+    keyboard.push([{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }]);
+    return { inline_keyboard: keyboard };
+  }
+
+  private getRemoveProxyChannelsKeyboard(): any {
+    const channels = this.settingsRepo.getAllowedProxyChannels();
+    const rows = channels.map((c) => [
+      { text: `🗑️ حذف ${c}`, callback_data: `del_pchan:${c}` },
+    ]);
+    rows.push([{ text: "🔙 انصراف", callback_data: "menu_proxy_channels" }]);
     return { inline_keyboard: rows };
   }
 
@@ -497,10 +738,24 @@ export class TelegramBotService {
   }
 
   private getFooterTextKeyboard(): any {
-    const hasText = !!this.settingsRepo.getCustomPostText();
+    const hasText = !!this.settingsRepo.getCustomConfigPostText();
     const buttons = [{ text: "✏️ تنظیم متن جدید", callback_data: "set_footer_text" }];
     if (hasText) {
       buttons.push({ text: "🗑️ پاک کردن متن", callback_data: "clear_footer_text" });
+    }
+    return {
+      inline_keyboard: [
+        buttons,
+        [{ text: "🔙 بازگشت به تنظیمات", callback_data: "menu_settings" }],
+      ],
+    };
+  }
+
+  private getProxyFooterTextKeyboard(): any {
+    const hasText = !!this.settingsRepo.getCustomProxyPostText();
+    const buttons = [{ text: "✏️ تنظیم متن جدید", callback_data: "set_proxy_footer_text" }];
+    if (hasText) {
+      buttons.push({ text: "🗑️ پاک کردن متن", callback_data: "clear_proxy_footer_text" });
     }
     return {
       inline_keyboard: [
@@ -528,8 +783,15 @@ export class TelegramBotService {
   private renderChannelList(): string {
     const channels = this.settingsRepo.getAllowedChannels();
     return channels.length > 0
-      ? channels.map((c, i) => `${i + 1}. \`${c}\``).join("\n")
-      : "_همه کانال‌های عضو شده_";
+      ? channels.map((c, i) => `${i + 1}. <code>${escapeHtml(c)}</code>`).join("\n")
+      : "<i>همه کانال‌های عضو شده</i>";
+  }
+
+  private renderProxyChannelList(): string {
+    const channels = this.settingsRepo.getAllowedProxyChannels();
+    return channels.length > 0
+      ? channels.map((c, i) => `${i + 1}. <code>${escapeHtml(c)}</code>`).join("\n")
+      : "<i>هیچ کانال پروکسی تنظیم نشده</i>";
   }
 
   // --- Telegram API Helpers ---
@@ -561,34 +823,85 @@ export class TelegramBotService {
     );
   }
 
-  private async triggerScan(chatId: string | number): Promise<void> {
-    await this.sendMessage(chatId, "🔍 در حال اسکن کانال‌ها و تست اتصال کانفیگ‌ها...", undefined, this.getPersistentReplyKeyboard());
+  private async sendProxyChannelsMenu(chatId: string | number): Promise<void> {
+    await this.sendMessage(
+      chatId,
+      this.getProxyChannelsMenuText(),
+      this.getProxyChannelsMenuKeyboard(),
+      this.getPersistentReplyKeyboard()
+    );
+  }
+
+  private async triggerConfigScan(chatId: string | number): Promise<void> {
+    await this.sendMessage(chatId, "🔍 در حال اسکن کانال‌های کانفیگ و تست اتصال...", undefined, this.getPersistentReplyKeyboard());
     this.orchestrator
-      .triggerManualScan()
+      .triggerManualConfigScan()
       .then(() => {
         this.sendMessage(chatId, "✅ اسکن و ارسال کانفیگ‌های سالم با موفقیت انجام شد!", undefined, this.getPersistentReplyKeyboard());
       })
       .catch((err) => {
-        this.sendMessage(chatId, `❌ خطا در اجرای اسکن: ${err.message}`, undefined, this.getPersistentReplyKeyboard());
+        this.sendMessage(chatId, `❌ خطا در اسکن کانفیگ: ${escapeHtml(err.message)}`, undefined, this.getPersistentReplyKeyboard());
+      });
+  }
+
+  private async triggerProxyScan(chatId: string | number): Promise<void> {
+    await this.sendMessage(chatId, "⚡ در حال اسکن کانال‌های پروکسی تلگرام و تست پینگ...", undefined, this.getPersistentReplyKeyboard());
+    this.orchestrator
+      .triggerManualProxyScan()
+      .then(() => {
+        this.sendMessage(chatId, "✅ اسکن و ارسال پروکسی‌های تلگرام با موفقیت انجام شد!", undefined, this.getPersistentReplyKeyboard());
+      })
+      .catch((err) => {
+        this.sendMessage(chatId, `❌ خطا در اسکن پروکسی: ${escapeHtml(err.message)}`, undefined, this.getPersistentReplyKeyboard());
+      });
+  }
+
+  private async triggerFullScan(chatId: string | number): Promise<void> {
+    await this.sendMessage(chatId, "🔍 در حال اسکن کامل کانال‌های کانفیگ و پروکسی...", undefined, this.getPersistentReplyKeyboard());
+    this.orchestrator
+      .triggerManualScan()
+      .then(() => {
+        this.sendMessage(chatId, "✅ اسکن کامل با موفقیت به پایان رسید!", undefined, this.getPersistentReplyKeyboard());
+      })
+      .catch((err) => {
+        this.sendMessage(chatId, `❌ خطا در اسکن کامل: ${escapeHtml(err.message)}`, undefined, this.getPersistentReplyKeyboard());
       });
   }
 
   private async sendStatus(chatId: string | number): Promise<void> {
     const allChannels = this.channelRepo.getAllChannels();
-    const unposted = this.configRepo.getUnpostedHealthyConfigs(100);
-    const isActive = this.settingsRepo.isMonitoringActive();
+    const isCheckPingConfig = this.settingsRepo.isCheckPingBeforePostConfig();
+    const isCheckPingProxy = this.settingsRepo.isCheckPingBeforePostProxy();
+    const unpostedConfigs = this.configRepo
+      .getUnpostedConfigs(100, isCheckPingConfig)
+      .filter((c) => c.protocol !== "mtproto" && c.protocol !== "socks5");
+    const unpostedProxies = this.configRepo
+      .getUnpostedConfigs(100, isCheckPingProxy)
+      .filter((c) => c.protocol === "mtproto" || c.protocol === "socks5");
+    const isConfigActive = this.settingsRepo.isConfigMonitoringActive();
+    const isProxyActive = this.settingsRepo.isProxyMonitoringActive();
     const interval = this.settingsRepo.getScanIntervalMinutes();
 
     await this.sendMessage(
       chatId,
-      `📊 **وضعیت سرور و ربات**\n\n` +
-        `⚡ **وضعیت اجرای اسکن:** ${isActive ? "🟢 فعال و خودکار" : "🔴 متوقف شده"}\n` +
-        `📡 **تعداد کانال‌ها در دیتابیس:** ${allChannels.length}\n` +
-        `🟢 **کانفیگ‌های سالم آماده ارسال:** ${unposted.length}\n` +
-        `🎯 **کانال ارسال:** \`${this.config.TARGET_CHANNEL_ID}\`\n` +
-        `⏱️ **زمان‌بندی اسکن:** هر ${interval} دقیقه`,
+      `📊 <b>وضعیت سرور و ربات</b>\n\n` +
+        `⚡ <b>وضعیت اسکن کانفیگ:</b> ${isConfigActive ? "🟢 فعال و خودکار" : "🔴 متوقف شده"}\n` +
+        `⚡ <b>وضعیت اسکن پروکسی:</b> ${isProxyActive ? "🟢 فعال و خودکار" : "🔴 متوقف شده"}\n` +
+        `🔍 <b>تست پینگ قبل ارسال (کانفیگ):</b> ${isCheckPingConfig ? "🟢 فعال" : "🔴 غیرفعال"}\n` +
+        `🔍 <b>تست پینگ قبل ارسال (پروکسی):</b> ${isCheckPingProxy ? "🟢 فعال" : "🔴 غیرفعال"}\n` +
+        `📡 <b>تعداد کانال‌ها در دیتابیس:</b> ${allChannels.length}\n` +
+        `🟢 <b>کانفیگ‌های آماده ارسال:</b> ${unpostedConfigs.length}\n` +
+        `🎁 <b>پروکسی‌های آماده ارسال:</b> ${unpostedProxies.length}\n` +
+        `🎯 <b>کانال ارسال:</b> <code>${escapeHtml(this.config.TARGET_CHANNEL_ID)}</code>\n` +
+        `⏱️ <b>زمان‌بندی اسکن:</b> هر ${interval} دقیقه`,
       {
-        inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "menu_main" }]],
+        inline_keyboard: [
+          [
+            { text: "🚀 اسکن کانفیگ", callback_data: "trigger_scan_config" },
+            { text: "⚡ اسکن پروکسی", callback_data: "trigger_scan_proxy" },
+          ],
+          [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "menu_main" }],
+        ],
       },
       this.getPersistentReplyKeyboard()
     );
@@ -597,12 +910,13 @@ export class TelegramBotService {
   private async sendHelp(chatId: string | number): Promise<void> {
     await this.sendMessage(
       chatId,
-      `❓ **راهنمای استفاده از ربات مانیتورینگ VPN**\n\n` +
-        `1️⃣ **🚀 شروع اسکن فوری:** یک دور اسکن و تست کانفیگ‌ها را بلافاصله اجرا می‌کند.\n` +
-        `2️⃣ **⏹ توقف / شروع خودکار:** اسکن دوره‌ای خودکار را متوقف یا مجدداً فعال می‌کند.\n` +
-        `3️⃣ **⚙️ تنظیمات:** تمام تنظیمات پینگ، کانال‌ها، زمان‌بندی و متن انتهای پست را مدیریت می‌کند.\n` +
-        `4️⃣ **📊 وضعیت سرور:** آمار لحظه‌ای کانفیگ‌ها و وضعیت را نشان می‌دهد.\n\n` +
-        `_برای بازگشت به منوی اصلی از دکمه‌های زیر استفاده کنید._`,
+      `❓ <b>راهنمای استفاده از ربات مانیتورینگ VPN و پروکسی</b>\n\n` +
+        `1️⃣ <b>🚀 اسکن کانفیگ:</b> اسکن فوری و ارسال کانفیگ‌های VPN سالم.\n` +
+        `2️⃣ <b>⚡ اسکن پروکسی:</b> اسکن فوری و ارسال پروکسی‌های تلگرام (MTProto).\n` +
+        `3️⃣ <b>⏹ توقف / فعال‌سازی مستقل:</b> کنترل زمان‌بندی خودکار به تفکیک برای کانفیگ و پروکسی.\n` +
+        `4️⃣ <b>⚙️ تنظیمات:</b> مدیریت کانال‌ها، متن‌های اختصاصی، پینگ و زمان‌بندی.\n` +
+        `5️⃣ <b>📊 وضعیت سرور:</b> آمار لحظه‌ای دیتابیس و وضعیت اسکنرها.\n\n` +
+        `<i>برای رفتن به منوی تنظیمات از دکمه زیر استفاده کنید.</i>`,
       {
         inline_keyboard: [[{ text: "⚙️ ورود به تنظیمات", callback_data: "menu_settings" }]],
       },
@@ -625,7 +939,7 @@ export class TelegramBotService {
       const body: any = {
         chat_id: chatId,
         text,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
       };
 
       if (inlineMarkup) {
@@ -636,11 +950,23 @@ export class TelegramBotService {
         body.reply_markup = this.getPersistentReplyKeyboard();
       }
 
-      await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      const res = await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+
+      const data = (await res.json()) as any;
+      if (!data.ok) {
+        logger.warn({ error: data.description, chatId }, "Telegram sendMessage failed with HTML, retrying plain text");
+        body.parse_mode = undefined;
+        body.text = text.replace(/<[^>]*>/g, "");
+        await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
     } catch (err: any) {
       logger.error({ err: err.message, chatId }, "Failed to send bot message");
     }
@@ -653,17 +979,35 @@ export class TelegramBotService {
     replyMarkup?: any
   ): Promise<void> {
     try {
-      await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/editMessageText`, {
+      const body: any = {
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      };
+
+      const res = await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/editMessageText`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          message_id: messageId,
-          text,
-          parse_mode: "Markdown",
-          reply_markup: replyMarkup,
-        }),
+        body: JSON.stringify(body),
       });
+
+      const data = (await res.json()) as any;
+      if (!data.ok) {
+        logger.warn({ error: data.description, chatId, messageId }, "editMessageText failed with HTML, retrying plain text or new message");
+        body.parse_mode = undefined;
+        body.text = text.replace(/<[^>]*>/g, "");
+        const retryRes = await fetch(`https://api.telegram.org/bot${this.config.TELEGRAM_BOT_TOKEN}/editMessageText`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const retryData = (await retryRes.json()) as any;
+        if (!retryData.ok) {
+          await this.sendMessage(chatId, text, replyMarkup, this.getPersistentReplyKeyboard());
+        }
+      }
     } catch (err: any) {
       logger.debug({ err: err.message }, "Error editing message, sending new message instead");
       await this.sendMessage(chatId, text, replyMarkup, this.getPersistentReplyKeyboard());

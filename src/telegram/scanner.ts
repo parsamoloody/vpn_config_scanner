@@ -2,8 +2,8 @@ import { TelegramClient } from "telegram";
 import { Config } from "../config/env.js";
 import { ChannelRepository } from "../database/repositories/channel.repo.js";
 import { SettingsRepository } from "../database/repositories/settings.repo.js";
-import { extractRawConfigsFromText } from "../extractor/regex.js";
-import { parseVpnConfig } from "../extractor/parser.js";
+import { extractRawConfigsFromText, extractRawProxiesFromText } from "../extractor/regex.js";
+import { parseVpnConfig, parseProxyConfig } from "../extractor/parser.js";
 import { ParsedVpnConfig } from "../extractor/types.js";
 import { logger } from "../logger.js";
 
@@ -186,6 +186,107 @@ export class TelegramScanner {
     return {
       messagesScanned: messages.length,
       configs,
+    };
+  }
+
+  async scanProxyChannels(): Promise<{
+    channelsScanned: number;
+    messagesScanned: number;
+    proxiesFound: ScannedConfigItem[];
+  }> {
+    let channelsScanned = 0;
+    let messagesScanned = 0;
+    const proxiesFound: ScannedConfigItem[] = [];
+
+    const rawAllowed = this.settingsRepo
+      ? this.settingsRepo.getAllowedProxyChannels()
+      : this.config.ALLOWED_PROXY_CHANNELS;
+    const allowed = rawAllowed.map((c) => this.cleanIdentifier(c));
+
+    if (allowed.length === 0) {
+      return { channelsScanned: 0, messagesScanned: 0, proxiesFound: [] };
+    }
+
+    logger.info({ proxyChannels: allowed }, "Scanning designated proxy channels...");
+
+    for (const channelIdentifier of allowed) {
+      try {
+        const entity = await this.client.getEntity(channelIdentifier);
+        if (!entity) continue;
+
+        const res = await this.scanSingleProxyChannelEntity(entity);
+        channelsScanned++;
+        messagesScanned += res.messagesScanned;
+        proxiesFound.push(...res.proxies);
+      } catch (err: any) {
+        logger.warn(
+          { channel: channelIdentifier, err: err.message },
+          "Failed to fetch or scan proxy channel. Ensure the bot account has joined this channel."
+        );
+      }
+    }
+
+    return {
+      channelsScanned,
+      messagesScanned,
+      proxiesFound,
+    };
+  }
+
+  private async scanSingleProxyChannelEntity(
+    entity: any,
+    inputEntity?: any
+  ): Promise<{ messagesScanned: number; proxies: ScannedConfigItem[] }> {
+    const channelId = `proxy_${entity.id ? entity.id.toString() : ""}`;
+    const title = entity.title || "Untitled Proxy Channel";
+    const username = entity.username || null;
+
+    this.channelRepo.upsertChannel(channelId, title, username);
+    const channelRecord = this.channelRepo.getChannel(channelId);
+    const lastScannedId = channelRecord?.last_scanned_message_id || 0;
+
+    let maxMessageIdInBatch = lastScannedId;
+    let newProxiesInChannel = 0;
+    const proxies: ScannedConfigItem[] = [];
+
+    const messages = await this.client.getMessages(inputEntity || entity, {
+      limit: lastScannedId === 0 ? this.config.INITIAL_CHANNEL_SCAN_LIMIT : this.config.SUBSEQUENT_CHANNEL_SCAN_LIMIT,
+      minId: lastScannedId > 0 ? lastScannedId : undefined,
+    });
+
+    for (const msg of messages) {
+      if (!msg.id) continue;
+      if (msg.id > maxMessageIdInBatch) {
+        maxMessageIdInBatch = msg.id;
+      }
+
+      const text = msg.message || (msg as any).text || "";
+      const rawProxies = extractRawProxiesFromText(text, msg.entities);
+      if (rawProxies.length === 0) continue;
+      for (const raw of rawProxies) {
+        const parsed = parseProxyConfig(raw);
+        if (parsed) {
+          proxies.push({
+            parsed,
+            sourceChannelId: channelId,
+            sourceChannelTitle: title,
+            sourceMessageId: msg.id,
+          });
+          newProxiesInChannel++;
+        }
+      }
+    }
+
+    this.channelRepo.updateScanProgress(channelId, maxMessageIdInBatch, newProxiesInChannel);
+
+    logger.debug(
+      { title, username, messagesCount: messages.length, newProxies: newProxiesInChannel },
+      "Finished scanning proxy channel"
+    );
+
+    return {
+      messagesScanned: messages.length,
+      proxies,
     };
   }
 

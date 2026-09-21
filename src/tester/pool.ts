@@ -47,7 +47,12 @@ export class TesterPool {
     // For Hysteria2 and TUIC (QUIC/UDP-based), if not supported directly by standard xray outbound,
     // we use TCP/UDP ping
     let tester = this.primaryTester;
-    if (vpnConfig.protocol === "hysteria2" || vpnConfig.protocol === "tuic") {
+    if (
+      vpnConfig.protocol === "hysteria2" ||
+      vpnConfig.protocol === "tuic" ||
+      vpnConfig.protocol === "mtproto" ||
+      vpnConfig.protocol === "socks5"
+    ) {
       tester = this.fallbackTester;
     }
 

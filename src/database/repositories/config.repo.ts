@@ -116,14 +116,20 @@ export class ConfigRepository {
     });
   }
 
-  getUnpostedHealthyConfigs(limit = 50): ConfigRecord[] {
+  getUnpostedConfigs(limit = 50, requireHealthy = true): ConfigRecord[] {
+    const where = requireHealthy ? "WHERE is_healthy = 1 AND posted_to_channel = 0" : "WHERE posted_to_channel = 0";
+    const orderBy = requireHealthy ? "ORDER BY latency_ms ASC, first_seen_at DESC" : "ORDER BY first_seen_at DESC";
     const stmt = this.db.prepare(`
       SELECT * FROM configs 
-      WHERE is_healthy = 1 AND posted_to_channel = 0
-      ORDER BY latency_ms ASC, first_seen_at DESC
+      ${where}
+      ${orderBy}
       LIMIT ?
     `);
     return stmt.all(limit) as ConfigRecord[];
+  }
+
+  getUnpostedHealthyConfigs(limit = 50): ConfigRecord[] {
+    return this.getUnpostedConfigs(limit, true);
   }
 
   startScanRun(): number {
